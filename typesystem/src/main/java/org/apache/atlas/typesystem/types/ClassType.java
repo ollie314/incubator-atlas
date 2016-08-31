@@ -21,6 +21,8 @@ package org.apache.atlas.typesystem.types;
 import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.typesystem.IReferenceableInstance;
 import org.apache.atlas.typesystem.IStruct;
@@ -34,9 +36,12 @@ import org.apache.atlas.typesystem.persistence.StructInstance;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.charset.Charset;
+import java.security.MessageDigest;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class ClassType extends HierarchicalType<ClassType, IReferenceableInstance>
         implements IConstructableType<IReferenceableInstance, ITypedReferenceableInstance> {
@@ -45,17 +50,14 @@ public class ClassType extends HierarchicalType<ClassType, IReferenceableInstanc
 
     public final Map<AttributeInfo, List<String>> infoToNameMap;
 
-    /**
-     * Used when creating a ClassType, to support recursive Structs.
-     */
-    ClassType(TypeSystem typeSystem, String name, ImmutableList<String> superTypes, int numFields) {
-        super(typeSystem, ClassType.class, name, superTypes, numFields);
+    ClassType(TypeSystem typeSystem, String name, String description, ImmutableSet<String> superTypes, int numFields) {
+        super(typeSystem, ClassType.class, name, description, superTypes, numFields);
         infoToNameMap = null;
     }
 
-    ClassType(TypeSystem typeSystem, String name, ImmutableList<String> superTypes, AttributeInfo... fields)
+    ClassType(TypeSystem typeSystem, String name, String description, ImmutableSet<String> superTypes, AttributeInfo... fields)
     throws AtlasException {
-        super(typeSystem, ClassType.class, name, superTypes, fields);
+        super(typeSystem, ClassType.class, name, description, superTypes, fields);
         infoToNameMap = TypeUtils.buildAttrInfoToNameMap(fieldMapping);
     }
 
@@ -66,7 +68,7 @@ public class ClassType extends HierarchicalType<ClassType, IReferenceableInstanc
 
     public void validateId(Id id) throws AtlasException {
         if (id != null) {
-            ClassType cType = typeSystem.getDataType(ClassType.class, id.className);
+            ClassType cType = typeSystem.getDataType(ClassType.class, id.typeName);
             if (isSubType(cType.getName())) {
                 return;
             }
@@ -149,7 +151,7 @@ public class ClassType extends HierarchicalType<ClassType, IReferenceableInstanc
                 validateId(((ReferenceableInstance) val).getId());
                 return (ReferenceableInstance) val;
             } else {
-                throw new ValueConversionException(this, val);
+                throw new ValueConversionException(this, val, "value's class is " + val.getClass().getName());
             }
         }
         if (!m.nullAllowed()) {
@@ -206,12 +208,32 @@ public class ClassType extends HierarchicalType<ClassType, IReferenceableInstanc
     }
 
     @Override
-    public void output(IReferenceableInstance s, Appendable buf, String prefix) throws AtlasException {
-        fieldMapping.output(s, buf, prefix);
+    public void output(IReferenceableInstance s, Appendable buf, String prefix, Set<IReferenceableInstance> inProcess) throws AtlasException {
+        fieldMapping.output(s, buf, prefix, inProcess);
     }
 
     @Override
     public List<String> getNames(AttributeInfo info) {
         return infoToNameMap.get(info);
+    }
+
+    @Override
+    public void updateSignatureHash(MessageDigest digester, Object val) throws AtlasException {
+        if( !(val instanceof  ITypedReferenceableInstance)) {
+            throw new IllegalArgumentException("Unexpected value type " + val.getClass().getSimpleName() + ". Expected instance of ITypedStruct");
+        }
+        digester.update(getName().getBytes(Charset.forName("UTF-8")));
+
+        if(fieldMapping.fields != null && val != null) {
+            IReferenceableInstance typedValue = (IReferenceableInstance) val;
+            if(fieldMapping.fields.values() != null) {
+                for (AttributeInfo aInfo : fieldMapping.fields.values()) {
+                    Object attrVal = typedValue.get(aInfo.name);
+                    if (attrVal != null) {
+                        aInfo.dataType().updateSignatureHash(digester, attrVal);
+                    }
+                }
+            }
+        }
     }
 }

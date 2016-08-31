@@ -52,6 +52,11 @@ public class DownCastStructInstance implements IStruct {
         fieldMapping.set(this, attrName, val);
     }
 
+    @Override
+    public void setNull(String attrName) throws AtlasException {
+        throw new UnsupportedOperationException("unset on attributes are not allowed");
+    }
+
     /*
      * Use only for json serialization
      * @nonpublic
@@ -64,6 +69,11 @@ public class DownCastStructInstance implements IStruct {
             m.put(attr, get(attr));
         }
         return m;
+    }
+
+    @Override
+    public String toShortString() {
+        return toString();
     }
 }
 

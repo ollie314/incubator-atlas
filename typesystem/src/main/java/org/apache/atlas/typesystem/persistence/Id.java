@@ -20,34 +20,60 @@ package org.apache.atlas.typesystem.persistence;
 
 import com.google.common.collect.ImmutableList;
 import org.apache.atlas.AtlasException;
+import org.apache.atlas.utils.ParamChecker;
 import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
 import org.apache.atlas.typesystem.types.FieldMapping;
+import org.apache.atlas.utils.MD5Utils;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.charset.Charset;
+import java.security.MessageDigest;
 import java.util.Date;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class Id implements ITypedReferenceableInstance {
+    public enum EntityState {
+        ACTIVE, DELETED
+    }
 
     public final String id;
-    public final String className;
+    public final String typeName;
     public final int version;
+    public EntityState state;
+    private static AtomicLong s_nextId = new AtomicLong(System.nanoTime());
 
-    public Id(String id, int version, String className) {
+    public Id(String id, int version, String typeName, String state) {
+        id       = ParamChecker.notEmpty(id, "id");
+        typeName = ParamChecker.notEmpty(typeName, "typeName");
+        state    = ParamChecker.notEmptyIfNotNull(state, "state");
         this.id = id;
-        this.className = className;
+        this.typeName = typeName;
         this.version = version;
+        if (state == null) {
+            this.state = EntityState.ACTIVE;
+        } else {
+            this.state = EntityState.valueOf(state.toUpperCase());
+        }
     }
 
-    public Id(long id, int version, String className) {
-        this("" + id, version, className);
+    public Id(String id, int version, String typeName) {
+        this(id, version, typeName, null);
     }
 
-    public Id(String className) {
-        this("" + (-System.nanoTime()), 0, className);
+    public Id(long id, int version, String typeName) {
+        this("" + id, version, typeName);
+    }
+
+    public Id(long id, int version, String typeName, String state) {
+        this("" + id, version, typeName, state);
+    }
+
+    public Id(String typeName) {
+        this("" + Id.nextNegativeLong(), 0, typeName);
     }
 
     public boolean isUnassigned() {
@@ -69,12 +95,18 @@ public class Id implements ITypedReferenceableInstance {
         return true;
     }
 
+    @Override
     public String toString() {
-        return String.format("(type: %s, id: %s)", className, isUnassigned() ? "<unassigned>" : "" + id);
+        return String.format("(type: %s, id: %s)", typeName, isUnassigned() ? "<unassigned>" : "" + id);
+    }
+
+    @Override
+    public String toShortString() {
+        return String.format("id[type=%s guid=%s state=%s]", typeName, id, state);
     }
 
     public String getClassName() {
-        return className;
+        return typeName;
     }
 
     public int getVersion() {
@@ -83,6 +115,14 @@ public class Id implements ITypedReferenceableInstance {
 
     public String _getId() {
         return id;
+    }
+
+    public EntityState getState() {
+        return state;
+    }
+
+    public String getStateAsString() {
+        return state == null ? null : state.name();
     }
 
     @Override
@@ -99,7 +139,7 @@ public class Id implements ITypedReferenceableInstance {
         if (version != id1.version) {
             return false;
         }
-        if (!className.equals(id1.className)) {
+        if (!typeName.equals(id1.typeName)) {
             return false;
         }
         if (!id.equals(id1.id)) {
@@ -112,7 +152,7 @@ public class Id implements ITypedReferenceableInstance {
     @Override
     public int hashCode() {
         int result = id.hashCode();
-        result = 31 * result + className.hashCode();
+        result = 31 * result + typeName.hashCode();
         result = 31 * result + version;
         return result;
     }
@@ -134,7 +174,7 @@ public class Id implements ITypedReferenceableInstance {
 
     @Override
     public String getTypeName() {
-        return className;
+        return typeName;
     }
 
     @Override
@@ -247,5 +287,25 @@ public class Id implements ITypedReferenceableInstance {
 
     public void setString(String attrName, String val) throws AtlasException {
         throw new AtlasException("Get/Set not supported on an Id object");
+    }
+
+    @Override
+    public String getSignatureHash(MessageDigest digester) throws AtlasException {
+        digester.update(id.getBytes(Charset.forName("UTF-8")));
+        digester.update(typeName.getBytes(Charset.forName("UTF-8")));
+        byte[] digest = digester.digest();
+        return MD5Utils.toString(digest);
+    }
+
+    private static long nextNegativeLong() {
+        long ret = s_nextId.getAndDecrement();
+
+        if (ret > 0) {
+          ret *= -1;
+        } else if (ret == 0) {
+          ret = Long.MIN_VALUE;
+        }
+
+        return ret;
     }
 }

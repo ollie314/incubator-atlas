@@ -20,8 +20,8 @@ package org.apache.atlas.typesystem.persistence;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+
 import org.apache.atlas.AtlasException;
-import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.ITypedStruct;
 import org.apache.atlas.typesystem.types.AttributeInfo;
 import org.apache.atlas.typesystem.types.ClassType;
@@ -29,12 +29,14 @@ import org.apache.atlas.typesystem.types.DataTypes;
 import org.apache.atlas.typesystem.types.EnumType;
 import org.apache.atlas.typesystem.types.EnumValue;
 import org.apache.atlas.typesystem.types.FieldMapping;
+import org.apache.atlas.typesystem.types.StructType;
 import org.apache.atlas.typesystem.types.TypeSystem;
-import org.apache.atlas.typesystem.types.TypeUtils;
 import org.apache.atlas.typesystem.types.ValueConversionException;
+import org.apache.atlas.utils.MD5Utils;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.security.MessageDigest;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -229,6 +231,30 @@ public class StructInstance implements ITypedStruct {
         }
         int nullPos = fieldMapping.fieldNullPos.get(attrName);
         nullFlags[nullPos] = true;
+
+        int pos = fieldMapping.fieldPos.get(attrName);
+
+        if (i.dataType() == DataTypes.BIGINTEGER_TYPE) {
+            bigIntegers[pos] = null;
+        } else if (i.dataType() == DataTypes.BIGDECIMAL_TYPE) {
+            bigDecimals[pos] = null;
+        } else if (i.dataType() == DataTypes.DATE_TYPE) {
+            dates[pos] = null;
+        } else if (i.dataType() == DataTypes.STRING_TYPE) {
+            strings[pos] = null;
+        } else if (i.dataType().getTypeCategory() == DataTypes.TypeCategory.ARRAY) {
+            arrays[pos] = null;
+        } else if (i.dataType().getTypeCategory() == DataTypes.TypeCategory.MAP) {
+            maps[pos] = null;
+        } else if (i.dataType().getTypeCategory() == DataTypes.TypeCategory.STRUCT
+            || i.dataType().getTypeCategory() == DataTypes.TypeCategory.TRAIT) {
+            structs[pos] = null;
+        } else if (i.dataType().getTypeCategory() == DataTypes.TypeCategory.CLASS) {
+                ids[pos] = null;
+                referenceables[pos] = null;
+        } else {
+            throw new AtlasException(String.format("Unknown datatype %s", i.dataType()));
+        }
     }
 
     /*
@@ -697,36 +723,30 @@ public class StructInstance implements ITypedStruct {
         strings[pos] = val;
     }
 
-    public void output(IStruct s, Appendable buf, String prefix) throws AtlasException {
-        TypeUtils.outputVal("{", buf, prefix);
-        if (s == null) {
-            TypeUtils.outputVal("<null>\n", buf, "");
-            return;
-        }
-        TypeUtils.outputVal("\n", buf, "");
-        String fieldPrefix = prefix + "\t";
-        for (Map.Entry<String, AttributeInfo> e : fieldMapping.fields.entrySet()) {
-            String attrName = e.getKey();
-            AttributeInfo i = e.getValue();
-            Object aVal = s.get(attrName);
-            TypeUtils.outputVal(attrName + " : ", buf, fieldPrefix);
-            i.dataType().output(aVal, buf, "");
-            TypeUtils.outputVal("\n", buf, "");
-        }
-        TypeUtils.outputVal("\n}\n", buf, "");
-    }
-
     @Override
     public String toString() {
         try {
             StringBuilder buf = new StringBuilder();
             String prefix = "";
 
-            fieldMapping.output(this, buf, prefix);
+            fieldMapping.output(this, buf, prefix, null);
             return buf.toString();
 
         } catch (AtlasException me) {
             throw new RuntimeException(me);
         }
+    }
+
+    @Override
+    public String getSignatureHash(MessageDigest digester) throws AtlasException {
+        StructType structType = TypeSystem.getInstance().getDataType(StructType.class, getTypeName());
+        structType.updateSignatureHash(digester, this);
+        byte[] digest = digester.digest();
+        return MD5Utils.toString(digest);
+    }
+
+    @Override
+    public String toShortString() {
+        return String.format("struct[type=%s]", dataTypeName);
     }
 }

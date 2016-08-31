@@ -19,17 +19,21 @@
 package org.apache.atlas.typesystem.types;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.typesystem.IReferenceableInstance;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
 import org.apache.atlas.typesystem.ITypedStruct;
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.atlas.typesystem.Struct;
+import org.apache.atlas.typesystem.TypesDef;
+import org.apache.atlas.typesystem.types.utils.TypesUtil;
 import org.testng.Assert;
-import org.testng.annotations.Test;
 import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -59,7 +63,47 @@ public class EnumTest extends BaseTest {
 
         ts.defineEnumType("LockLevel", new EnumValue("DB", 1), new EnumValue("TABLE", 2),
                 new EnumValue("PARTITION", 3));
+    }
 
+    @Test
+    public void testTypeUpdate() throws Exception {
+        TypeSystem ts = getTypeSystem();
+        EnumTypeDefinition etd = new EnumTypeDefinition(newName(), new EnumValue("A", 1));
+        TypesDef typesDef = getTypesDef(etd);
+        ts.defineTypes(typesDef);
+
+        //Allow adding new enum
+        etd = new EnumTypeDefinition(etd.name, new EnumValue("A", 1), new EnumValue("B", 2));
+        typesDef = getTypesDef(etd);
+        ts.updateTypes(typesDef);
+
+        //Don't allow deleting enum
+        etd = new EnumTypeDefinition(etd.name, new EnumValue("A", 1));
+        typesDef = getTypesDef(etd);
+        try {
+            ts.updateTypes(typesDef);
+            Assert.fail("Expected TypeUpdateException");
+        } catch (TypeUpdateException e) {
+            //assert that type is not updated when validation fails
+            EnumType enumType = ts.getDataType(EnumType.class, etd.name);
+            Assert.assertEquals(enumType.values().size(), 2);
+        }
+
+        //Don't allow changing ordinal of existing enum value
+        etd = new EnumTypeDefinition(etd.name, new EnumValue("A", 2));
+        typesDef = getTypesDef(etd);
+        try {
+            ts.updateTypes(typesDef);
+            Assert.fail("Expected TypeUpdateException");
+        } catch (TypeUpdateException e) {
+            //expected
+        }
+    }
+
+    private TypesDef getTypesDef(EnumTypeDefinition enumTypeDefinition) {
+        return TypesUtil.getTypesDef(ImmutableList.of(enumTypeDefinition), ImmutableList.<StructTypeDefinition>of(),
+                ImmutableList.<HierarchicalTypeDefinition<TraitType>>of(),
+                ImmutableList.<HierarchicalTypeDefinition<ClassType>>of());
     }
 
     protected void fillStruct(Struct s) throws AtlasException {
@@ -101,7 +145,7 @@ public class EnumTest extends BaseTest {
 
     protected ClassType defineClassTypeWithEnum(TypeSystem ts) throws AtlasException {
         return ts.defineClassType(
-                createClassTypeDef("t4", ImmutableList.<String>of(), createRequiredAttrDef("a", DataTypes.INT_TYPE),
+                createClassTypeDef("t4", ImmutableSet.<String>of(), createRequiredAttrDef("a", DataTypes.INT_TYPE),
                         createOptionalAttrDef("b", DataTypes.BOOLEAN_TYPE),
                         createOptionalAttrDef("c", DataTypes.BYTE_TYPE),
                         createOptionalAttrDef("d", DataTypes.SHORT_TYPE),
@@ -125,7 +169,7 @@ public class EnumTest extends BaseTest {
     public void testStruct() throws AtlasException {
         TypeSystem ts = getTypeSystem();
         defineEnums(ts);
-        StructType structType = ts.defineStructType("t3", true, createRequiredAttrDef("a", DataTypes.INT_TYPE),
+        StructType structType = ts.defineStructType("ts", true, createRequiredAttrDef("a", DataTypes.INT_TYPE),
                 createOptionalAttrDef("b", DataTypes.BOOLEAN_TYPE), createOptionalAttrDef("c", DataTypes.BYTE_TYPE),
                 createOptionalAttrDef("d", DataTypes.SHORT_TYPE),
                 createOptionalAttrDef("enum1", ts.getDataType(EnumType.class, "HiveObjectType")),
@@ -142,7 +186,7 @@ public class EnumTest extends BaseTest {
                 createOptionalAttrDef("o", ts.defineMapType(DataTypes.STRING_TYPE, DataTypes.DOUBLE_TYPE)),
                 createOptionalAttrDef("enum4", ts.getDataType(EnumType.class, "LockLevel")));
 
-        Struct s = createStructWithEnum("t3");
+        Struct s = createStructWithEnum("ts");
         ITypedStruct typedS = structType.convert(s, Multiplicity.REQUIRED);
         Assert.assertEquals(typedS.toString(), "{\n" +
                 "\ta : \t1\n" +

@@ -26,7 +26,7 @@ import com.tinkerpop.blueprints.{Vertex, Direction}
 import org.apache.atlas.AtlasException
 import org.apache.atlas.query.Expressions.{ComparisonExpression, ExpressionException}
 import org.apache.atlas.query.TypeUtils.FieldInfo
-import org.apache.atlas.repository.graph.GraphBackedMetadataRepository
+import org.apache.atlas.repository.graph.{GraphHelper, GraphBackedMetadataRepository}
 import org.apache.atlas.typesystem.persistence.Id
 import org.apache.atlas.typesystem.types.DataTypes._
 import org.apache.atlas.typesystem.types._
@@ -60,6 +60,11 @@ trait GraphPersistenceStrategies {
      * Name of attribute used to store guid in vertex
      */
     def idAttributeName : String
+
+    /**
+      * Name of attribute used to store state in vertex
+      */
+    def stateAttributeName : String
 
     /**
      * Given a dataType and a reference attribute, how is edge labeled
@@ -190,6 +195,7 @@ object GraphPersistenceStrategy1 extends GraphPersistenceStrategies {
     val typeAttributeName = "typeName"
     val superTypeAttributeName = "superTypeNames"
     val idAttributeName = "guid"
+    val stateAttributeName = "state"
 
     def edgeLabel(dataType: IDataType[_], aInfo: AttributeInfo) = s"__${dataType.getName}.${aInfo.name}"
 
@@ -197,9 +203,9 @@ object GraphPersistenceStrategy1 extends GraphPersistenceStrategies {
 
     val fieldPrefixInSelect = "it"
 
-    def traitLabel(cls: IDataType[_], traitName: String) = s"${cls.getName}.$traitName"
+    def traitLabel(cls: IDataType[_], traitName: String) = s"$traitName"
 
-    def fieldNameInVertex(dataType: IDataType[_], aInfo: AttributeInfo) = GraphBackedMetadataRepository.getQualifiedName(dataType, aInfo.name)
+    def fieldNameInVertex(dataType: IDataType[_], aInfo: AttributeInfo) = GraphHelper.getQualifiedFieldName(dataType, aInfo.name)
 
     def getIdFromVertex(dataTypeNm: String, v: TitanVertex): Id =
         new Id(v.getId.toString, 0, dataTypeNm)

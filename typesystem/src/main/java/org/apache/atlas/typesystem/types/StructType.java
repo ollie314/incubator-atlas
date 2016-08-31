@@ -18,42 +18,43 @@
 
 package org.apache.atlas.typesystem.types;
 
-import com.google.common.collect.ImmutableList;
+import java.io.IOException;
+import java.nio.charset.Charset;
+import java.security.MessageDigest;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.ITypedStruct;
 
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
 public class StructType extends AbstractDataType<IStruct> implements IConstructableType<IStruct, ITypedStruct> {
 
     public final TypeSystem typeSystem;
-    public final String name;
     public final FieldMapping fieldMapping;
     public final Map<AttributeInfo, List<String>> infoToNameMap;
     public final int numFields;
     private final TypedStructHandler handler;
 
-    /**
-     * Used when creating a StructType, to support recursive Structs.
-     */
-    protected StructType(TypeSystem typeSystem, String name, int numFields) {
+    protected StructType(TypeSystem typeSystem, String name, String description, int numFields) {
+        super(name, description);
         this.typeSystem = typeSystem;
-        this.name = name;
         this.fieldMapping = null;
         infoToNameMap = null;
         this.numFields = numFields;
         this.handler = null;
     }
 
-    protected StructType(TypeSystem typeSystem, String name, ImmutableList<String> superTypes, AttributeInfo... fields)
+    protected StructType(TypeSystem typeSystem, String name, String description, AttributeInfo... fields)
     throws AtlasException {
+        super(name, description);
         this.typeSystem = typeSystem;
-        this.name = name;
-        this.fieldMapping = constructFieldMapping(superTypes, fields);
+        this.fieldMapping = constructFieldMapping(fields);
         infoToNameMap = TypeUtils.buildAttrInfoToNameMap(this.fieldMapping);
         this.numFields = this.fieldMapping.fields.size();
         this.handler = new TypedStructHandler(this);
@@ -63,12 +64,24 @@ public class StructType extends AbstractDataType<IStruct> implements IConstructa
         return fieldMapping;
     }
 
+    /**
+     * Validate that current definition can be updated with the new definition
+     * @param newType
+     * @return true if the current definition can be updated with the new definition, else false
+     */
     @Override
-    public String getName() {
-        return name;
+    public void validateUpdate(IDataType newType) throws TypeUpdateException {
+        super.validateUpdate(newType);
+
+        StructType newStructType = (StructType) newType;
+        try {
+            TypeUtils.validateUpdate(fieldMapping, newStructType.fieldMapping);
+        } catch (TypeUpdateException e) {
+            throw new TypeUpdateException(newType, e);
+        }
     }
 
-    protected FieldMapping constructFieldMapping(ImmutableList<String> superTypes, AttributeInfo... fields)
+    protected FieldMapping constructFieldMapping(AttributeInfo... fields)
     throws AtlasException {
 
         Map<String, AttributeInfo> fieldsMap = new LinkedHashMap<String, AttributeInfo>();
@@ -173,11 +186,85 @@ public class StructType extends AbstractDataType<IStruct> implements IConstructa
     }
 
     @Override
-    public void output(IStruct s, Appendable buf, String prefix) throws AtlasException {
-        handler.output(s, buf, prefix);
+    public void output(IStruct s, Appendable buf, String prefix, Set<IStruct> inProcess) throws AtlasException {
+        handler.output(s, buf, prefix, inProcess);
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder buf = new StringBuilder();
+        try {
+            output(buf, new HashSet<String>());
+        }
+        catch (AtlasException e) {
+            throw new RuntimeException(e);
+        }
+        return buf.toString();
+    }
+
+    @Override
+    public void output(Appendable buf, Set<String> typesInProcess) throws AtlasException {
+
+        if (typesInProcess == null) {
+            typesInProcess = new HashSet<>();
+        }
+        else if (typesInProcess.contains(name)) {
+            // Avoid infinite recursion on bi-directional reference attributes.
+            try {
+                buf.append(name);
+            } catch (IOException e) {
+                throw new AtlasException(e);
+            }
+            return;
+        }
+
+        typesInProcess.add(name);
+        try {
+            buf.append(getClass().getSimpleName());
+            buf.append("{name=").append(name);
+            buf.append(", description=").append(description);
+            buf.append(", fieldMapping.fields=[");
+            Iterator<AttributeInfo> it = fieldMapping.fields.values().iterator();
+            while (it.hasNext()) {
+                AttributeInfo attrInfo = it.next();
+                attrInfo.output(buf, typesInProcess);
+                if (it.hasNext()) {
+                    buf.append(", ");
+                }
+                else {
+                    buf.append(']');
+                }
+            }
+            buf.append("}");
+        }
+        catch(IOException e) {
+            throw new AtlasException(e);
+        }
+        finally {
+            typesInProcess.remove(name);
+        }
+    }
+
+    @Override
+    public void updateSignatureHash(MessageDigest digester, Object val) throws AtlasException {
+        if( !(val instanceof  ITypedStruct)) {
+            throw new IllegalArgumentException("Unexpected value type " + val.getClass().getSimpleName() + ". Expected instance of ITypedStruct");
+        }
+        digester.update(getName().getBytes(Charset.forName("UTF-8")));
+
+        if(fieldMapping.fields != null && val != null) {
+            IStruct typedValue = (IStruct) val;
+            for (AttributeInfo aInfo : fieldMapping.fields.values()) {
+                Object attrVal = typedValue.get(aInfo.name);
+                if(attrVal != null) {
+                    aInfo.dataType().updateSignatureHash(digester, attrVal);
+                }
+            }
+        }
     }
 
     public List<String> getNames(AttributeInfo info) {
         return infoToNameMap.get(info);
     }
+
 }

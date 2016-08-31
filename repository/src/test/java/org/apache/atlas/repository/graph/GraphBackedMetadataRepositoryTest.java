@@ -19,24 +19,31 @@
 package org.apache.atlas.repository.graph;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.thinkaurelius.titan.core.TitanGraph;
 import com.thinkaurelius.titan.core.util.TitanCleanup;
 import com.tinkerpop.blueprints.Compare;
+import com.tinkerpop.blueprints.Direction;
+import com.tinkerpop.blueprints.Edge;
 import com.tinkerpop.blueprints.GraphQuery;
 import com.tinkerpop.blueprints.Vertex;
 import org.apache.atlas.GraphTransaction;
 import org.apache.atlas.RepositoryMetadataModule;
+import org.apache.atlas.RequestContext;
 import org.apache.atlas.TestUtils;
 import org.apache.atlas.discovery.graph.GraphBackedDiscoveryService;
+import org.apache.atlas.query.QueryParams;
 import org.apache.atlas.repository.Constants;
-import org.apache.atlas.repository.EntityNotFoundException;
 import org.apache.atlas.repository.RepositoryException;
 import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
 import org.apache.atlas.typesystem.ITypedStruct;
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.atlas.typesystem.Struct;
+import org.apache.atlas.typesystem.exception.EntityNotFoundException;
+import org.apache.atlas.typesystem.exception.TraitNotFoundException;
 import org.apache.atlas.typesystem.persistence.Id;
+import org.apache.atlas.typesystem.types.AttributeDefinition;
 import org.apache.atlas.typesystem.types.ClassType;
 import org.apache.atlas.typesystem.types.DataTypes;
 import org.apache.atlas.typesystem.types.HierarchicalTypeDefinition;
@@ -50,6 +57,7 @@ import org.codehaus.jettison.json.JSONObject;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Guice;
 import org.testng.annotations.Test;
 import scala.actors.threadpool.Arrays;
@@ -61,6 +69,17 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+
+import static org.apache.atlas.typesystem.types.utils.TypesUtil.createClassTypeDef;
+import static org.apache.atlas.typesystem.types.utils.TypesUtil.createUniqueRequiredAttrDef;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNotEquals;
+import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertTrue;
 
 /**
  * GraphBackedMetadataRepository test
@@ -82,6 +101,7 @@ public class GraphBackedMetadataRepositoryTest {
 
     private TypeSystem typeSystem;
     private String guid;
+    private QueryParams queryParams = new QueryParams(100, 0);
 
     @BeforeClass
     public void setUp() throws Exception {
@@ -94,6 +114,10 @@ public class GraphBackedMetadataRepositoryTest {
         TestUtils.createHiveTypes(typeSystem);
     }
 
+    @BeforeMethod
+    public void setupContext() {
+        RequestContext.createContext();
+    }
 
     @AfterClass
     public void tearDown() throws Exception {
@@ -111,17 +135,77 @@ public class GraphBackedMetadataRepositoryTest {
         }
     }
 
+    @Test
+    //In some cases of parallel APIs, the edge is added, but get edge by label doesn't return the edge. ATLAS-1104
+    public void testConcurrentCalls() throws Exception {
+        final HierarchicalTypeDefinition<ClassType> refType =
+                createClassTypeDef(randomString(), ImmutableSet.<String>of());
+        HierarchicalTypeDefinition<ClassType> type =
+                createClassTypeDef(randomString(), ImmutableSet.<String>of(),
+                        new AttributeDefinition("ref", refType.typeName, Multiplicity.OPTIONAL, true, null));
+        typeSystem.defineClassType(refType);
+        typeSystem.defineClassType(type);
+
+        String refId1 = createEntity(new Referenceable(refType.typeName)).get(0);
+        String refId2 = createEntity(new Referenceable(refType.typeName)).get(0);
+
+        final Referenceable instance1 = new Referenceable(type.typeName);
+        instance1.set("ref", new Referenceable(refId1, refType.typeName, null));
+
+        final Referenceable instance2 = new Referenceable(type.typeName);
+        instance2.set("ref", new Referenceable(refId2, refType.typeName, null));
+
+        ExecutorService executor = Executors.newFixedThreadPool(3);
+        List<Future<Object>> futures = new ArrayList<>();
+        futures.add(executor.submit(new Callable<Object>() {
+            @Override
+            public Object call() throws Exception {
+                return createEntity(instance1).get(0);
+            }
+        }));
+        futures.add(executor.submit(new Callable<Object>() {
+            @Override
+            public Object call() throws Exception {
+                return createEntity(instance2).get(0);
+            }
+        }));
+        futures.add(executor.submit(new Callable<Object>() {
+            @Override
+            public Object call() throws Exception {
+                return discoveryService.searchByDSL(TestUtils.TABLE_TYPE, new QueryParams(10, 0));
+            }
+        }));
+
+        String id1 = (String) futures.get(0).get();
+        String id2 = (String) futures.get(1).get();
+        futures.get(2).get();
+        executor.shutdown();
+
+        boolean validated1 = assertEdge(id1, type.typeName);
+        boolean validated2 = assertEdge(id2, type.typeName);
+        assertTrue(validated1 | validated2);
+    }
+
+    private boolean assertEdge(String id, String typeName) throws Exception {
+        TitanGraph graph = graphProvider.get();
+        Vertex vertex = graph.query().has(Constants.GUID_PROPERTY_KEY, id).vertices().iterator().next();
+        Iterable<Edge> edges = vertex.getEdges(Direction.OUT, Constants.INTERNAL_PROPERTY_KEY_PREFIX + typeName + ".ref");
+        if (!edges.iterator().hasNext()) {
+            ITypedReferenceableInstance entity = repositoryService.getEntityDefinition(id);
+            assertNotNull(entity.get("ref"));
+            return true;
+        }
+        return false;
+    }
 
     @Test
     public void testSubmitEntity() throws Exception {
-        Referenceable hrDept = TestUtils.createDeptEg1(typeSystem);
-        ClassType deptType = typeSystem.getDataType(ClassType.class, "Department");
-        ITypedReferenceableInstance hrDept2 = deptType.convert(hrDept, Multiplicity.REQUIRED);
+        ITypedReferenceableInstance hrDept = TestUtils.createDeptEg1(typeSystem);
 
-        String[] guids = repositoryService.createEntities(hrDept2);
+        List<String> guids = repositoryService.createEntities(hrDept);
         Assert.assertNotNull(guids);
-        Assert.assertEquals(guids.length, 1);
-        guid = guids[0];
+        Assert.assertEquals(guids.size(), 5);
+        guid = guids.get(4);
         Assert.assertNotNull(guid);
     }
 
@@ -129,20 +213,23 @@ public class GraphBackedMetadataRepositoryTest {
     public void testGetEntityDefinitionForDepartment() throws Exception {
         ITypedReferenceableInstance entity = repositoryService.getEntityDefinition(guid);
         Assert.assertNotNull(entity);
+
+        //entity state should be active by default
+        Assert.assertEquals(entity.getId().getState(), Id.EntityState.ACTIVE);
     }
 
-    @Test(expectedExceptions = RepositoryException.class)
+    @Test(expectedExceptions = EntityNotFoundException.class)
     public void testGetEntityDefinitionNonExistent() throws Exception {
         repositoryService.getEntityDefinition("blah");
         Assert.fail();
     }
 
-    @Test
+    @Test(dependsOnMethods = "testSubmitEntity")
     public void testGetEntityList() throws Exception {
-        List<String> entityList = repositoryService.getEntityList(TestUtils.ENTITY_TYPE);
+        List<String> entityList = repositoryService.getEntityList(TestUtils.DEPARTMENT_TYPE);
         System.out.println("entityList = " + entityList);
         Assert.assertNotNull(entityList);
-        Assert.assertEquals(entityList.size(), 1); // one department
+        Assert.assertTrue(entityList.contains(guid));
     }
 
     @Test
@@ -153,8 +240,8 @@ public class GraphBackedMetadataRepositoryTest {
     @Test(dependsOnMethods = "testSubmitEntity")
     public void testGetTraitLabel() throws Exception {
         Assert.assertEquals(
-            repositoryService.getTraitLabel(typeSystem.getDataType(ClassType.class, TestUtils.TABLE_TYPE),
-                TestUtils.CLASSIFICATION), TestUtils.TABLE_TYPE + "." + TestUtils.CLASSIFICATION);
+                repositoryService.getTraitLabel(typeSystem.getDataType(ClassType.class, TestUtils.TABLE_TYPE),
+                        TestUtils.CLASSIFICATION), TestUtils.CLASSIFICATION);
     }
 
     @Test
@@ -173,14 +260,12 @@ public class GraphBackedMetadataRepositoryTest {
         ITypedReferenceableInstance db = dbType.convert(databaseInstance, Multiplicity.REQUIRED);
         System.out.println("db = " + db);
 
-        String dbGUID = repositoryService.createEntities(db)[0];
-        System.out.println("added db = " + dbGUID);
-
-        Referenceable dbInstance = new Referenceable(dbGUID, TestUtils.DATABASE_TYPE, databaseInstance.getValuesMap());
-
-        ITypedReferenceableInstance table = createHiveTableInstance(dbInstance);
-        String tableGUID = repositoryService.createEntities(table)[0];
-        System.out.println("added table = " + tableGUID);
+        //Reuse the same database instance without id, with the same unique attribute
+        ITypedReferenceableInstance table = createHiveTableInstance(databaseInstance);
+        List<String> guids = createEntities(db, table);
+        Assert.assertEquals(guids.size(), 7);   //1 db + 5 columns + 1 table. Shouldn't create db again
+        System.out.println("added db = " + guids.get(0));
+        System.out.println("added table = " + guids.get(6));
     }
 
     @Test(dependsOnMethods = "testCreateEntity")
@@ -190,6 +275,17 @@ public class GraphBackedMetadataRepositoryTest {
         ITypedReferenceableInstance table = repositoryService.getEntityDefinition(guid);
         Assert.assertEquals(table.getDate("created"), new Date(TestUtils.TEST_DATE_IN_LONG));
         System.out.println("*** table = " + table);
+    }
+
+    private List<String> createEntities(ITypedReferenceableInstance... instances) throws Exception {
+        RequestContext.createContext();
+        return repositoryService.createEntities(instances);
+    }
+
+    private List<String> createEntity(Referenceable entity) throws Exception {
+        ClassType type = typeSystem.getDataType(ClassType.class, entity.getTypeName());
+        ITypedReferenceableInstance instance = type.convert(entity, Multiplicity.REQUIRED);
+        return createEntities(instance);
     }
 
     @GraphTransaction
@@ -236,9 +332,42 @@ public class GraphBackedMetadataRepositoryTest {
         Assert.fail();
     }
 
+    @Test
+    public void testMultipleTypesWithSameUniqueAttribute() throws Exception {
+        //Two entities of different types(with same supertype that has the unique attribute) with same qualified name should succeed
+        HierarchicalTypeDefinition<ClassType> supertype =
+                createClassTypeDef(randomString(), ImmutableSet.<String>of(),
+                        createUniqueRequiredAttrDef("name", DataTypes.STRING_TYPE));
+        HierarchicalTypeDefinition<ClassType> t1 =
+                createClassTypeDef(randomString(), ImmutableSet.of(supertype.typeName));
+        HierarchicalTypeDefinition<ClassType> t2 =
+                createClassTypeDef(randomString(), ImmutableSet.of(supertype.typeName));
+        typeSystem.defineClassTypes(supertype, t1, t2);
+
+        final String name = randomString();
+        String id1 = createEntity(new Referenceable(t1.typeName) {{
+            set("name", name);
+        }}).get(0);
+        String id2 = createEntity(new Referenceable(t2.typeName) {{
+            set("name", name);
+        }}).get(0);
+        assertNotEquals(id1, id2);
+
+        ITypedReferenceableInstance entity = repositoryService.getEntityDefinition(t1.typeName, "name", name);
+        assertEquals(entity.getTypeName(), t1.typeName);
+        assertEquals(entity.getId()._getId(), id1);
+
+        entity = repositoryService.getEntityDefinition(t2.typeName, "name", name);
+        assertEquals(entity.getTypeName(), t2.typeName);
+        assertEquals(entity.getId()._getId(), id2);
+    }
+
     @Test(dependsOnMethods = "testGetTraitNames")
     public void testAddTrait() throws Exception {
         final String aGUID = getGUID();
+        Vertex vertex = GraphHelper.getInstance().getVertexForGUID(aGUID);
+        Long modificationTimestampPreUpdate = vertex.getProperty(Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY);
+        Assert.assertNotNull(modificationTimestampPreUpdate);
 
         List<String> traitNames = repositoryService.getTraitNames(aGUID);
         System.out.println("traitNames = " + traitNames);
@@ -256,6 +385,11 @@ public class GraphBackedMetadataRepositoryTest {
         Assert.assertEquals(traitNames.size(), 2);
         Assert.assertTrue(traitNames.contains(TestUtils.PII));
         Assert.assertTrue(traitNames.contains(TestUtils.CLASSIFICATION));
+        
+        // Verify modification timestamp was updated.
+        GraphHelper.getInstance().getVertexForGUID(aGUID);
+        Long modificationTimestampPostUpdate = vertex.getProperty(Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY);
+        Assert.assertNotNull(modificationTimestampPostUpdate);
     }
 
     @Test(dependsOnMethods = "testAddTrait")
@@ -264,7 +398,7 @@ public class GraphBackedMetadataRepositoryTest {
         final String traitName = "P_I_I";
 
         HierarchicalTypeDefinition<TraitType> piiTrait = TypesUtil
-            .createTraitTypeDef(traitName, ImmutableList.<String>of(),
+            .createTraitTypeDef(traitName, ImmutableSet.<String>of(),
                 TypesUtil.createRequiredAttrDef("type", DataTypes.STRING_TYPE));
         TraitType traitType = typeSystem.defineTraitType(piiTrait);
         ITypedStruct traitInstance = traitType.createInstance();
@@ -303,6 +437,9 @@ public class GraphBackedMetadataRepositoryTest {
     @Test(dependsOnMethods = "testAddTrait")
     public void testDeleteTrait() throws Exception {
         final String aGUID = getGUID();
+        Vertex vertex = GraphHelper.getInstance().getVertexForGUID(aGUID);
+        Long modificationTimestampPreUpdate = vertex.getProperty(Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY);
+        Assert.assertNotNull(modificationTimestampPreUpdate);
 
         List<String> traitNames = repositoryService.getTraitNames(aGUID);
         Assert.assertEquals(traitNames.size(), 3);
@@ -317,15 +454,21 @@ public class GraphBackedMetadataRepositoryTest {
         Assert.assertEquals(traitNames.size(), 2);
         Assert.assertTrue(traitNames.contains(TestUtils.CLASSIFICATION));
         Assert.assertFalse(traitNames.contains(TestUtils.PII));
+        
+        // Verify modification timestamp was updated.
+        GraphHelper.getInstance().getVertexForGUID(aGUID);
+        Long modificationTimestampPostUpdate = vertex.getProperty(Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY);
+        Assert.assertNotNull(modificationTimestampPostUpdate);
+        Assert.assertTrue(modificationTimestampPostUpdate > modificationTimestampPreUpdate);
     }
 
-    @Test(expectedExceptions = RepositoryException.class)
+    @Test(expectedExceptions = EntityNotFoundException.class)
     public void testDeleteTraitForNonExistentEntity() throws Exception {
         repositoryService.deleteTrait(UUID.randomUUID().toString(), TestUtils.PII);
         Assert.fail();
     }
 
-    @Test(expectedExceptions = RepositoryException.class)
+    @Test(expectedExceptions = TraitNotFoundException.class)
     public void testDeleteTraitForNonExistentTrait() throws Exception {
         final String aGUID = getGUID();
         repositoryService.deleteTrait(aGUID, "PCI");
@@ -342,20 +485,20 @@ public class GraphBackedMetadataRepositoryTest {
         }
 
         Id expected = new Id(guid, tableVertex.<Integer>getProperty(Constants.VERSION_PROPERTY_KEY), TestUtils.TABLE_TYPE);
-        Assert.assertEquals(repositoryService.getIdFromVertex(TestUtils.TABLE_TYPE, tableVertex), expected);
+        Assert.assertEquals(GraphHelper.getIdFromVertex(TestUtils.TABLE_TYPE, tableVertex), expected);
     }
 
     @Test(dependsOnMethods = "testCreateEntity")
     public void testGetTypeName() throws Exception {
         Vertex tableVertex = getTableEntityVertex();
-        Assert.assertEquals(repositoryService.getTypeName(tableVertex), TestUtils.TABLE_TYPE);
+        Assert.assertEquals(GraphHelper.getTypeName(tableVertex), TestUtils.TABLE_TYPE);
     }
 
     @Test(dependsOnMethods = "testCreateEntity")
     public void testSearchByDSLQuery() throws Exception {
         String dslQuery = "hive_database as PII";
         System.out.println("Executing dslQuery = " + dslQuery);
-        String jsonResults = discoveryService.searchByDSL(dslQuery);
+        String jsonResults = discoveryService.searchByDSL(dslQuery, queryParams);
         Assert.assertNotNull(jsonResults);
 
         JSONObject results = new JSONObject(jsonResults);
@@ -388,7 +531,7 @@ public class GraphBackedMetadataRepositoryTest {
     public void testSearchByDSLWithInheritance() throws Exception {
         String dslQuery = "Person where name = 'Jane'";
         System.out.println("Executing dslQuery = " + dslQuery);
-        String jsonResults = discoveryService.searchByDSL(dslQuery);
+        String jsonResults = discoveryService.searchByDSL(dslQuery, queryParams);
         Assert.assertNotNull(jsonResults);
 
         JSONObject results = new JSONObject(jsonResults);
@@ -415,8 +558,11 @@ public class GraphBackedMetadataRepositoryTest {
     public void testBug37860() throws Exception {
         String dslQuery = "hive_table as t where name = 'bar' "
             + "database where name = 'foo' and description = 'foo database' select t";
+
+        TestUtils.dumpGraph(graphProvider.get());
+
         System.out.println("Executing dslQuery = " + dslQuery);
-        String jsonResults = discoveryService.searchByDSL(dslQuery);
+        String jsonResults = discoveryService.searchByDSL(dslQuery, queryParams);
         Assert.assertNotNull(jsonResults);
 
         JSONObject results = new JSONObject(jsonResults);
@@ -446,9 +592,11 @@ public class GraphBackedMetadataRepositoryTest {
         //but with elasticsearch, doesn't work without sleep. why??
         long sleepInterval = 1000;
 
+        TestUtils.dumpGraph(graphProvider.get());
+
         //person in hr department whose name is john
         Thread.sleep(sleepInterval);
-        String response = discoveryService.searchByFullText("john");
+        String response = discoveryService.searchByFullText("john", queryParams);
         Assert.assertNotNull(response);
         JSONArray results = new JSONArray(response);
         Assert.assertEquals(results.length(), 1);
@@ -456,7 +604,7 @@ public class GraphBackedMetadataRepositoryTest {
         Assert.assertEquals(row.get("typeName"), "Person");
 
         //person in hr department who lives in santa clara
-        response = discoveryService.searchByFullText("Jane AND santa AND clara");
+        response = discoveryService.searchByFullText("Jane AND santa AND clara", queryParams);
         Assert.assertNotNull(response);
         results = new JSONArray(response);
         Assert.assertEquals(results.length(), 1);
@@ -464,12 +612,29 @@ public class GraphBackedMetadataRepositoryTest {
         Assert.assertEquals(row.get("typeName"), "Manager");
 
         //search for person in hr department whose name starts is john/jahn
-        response = discoveryService.searchByFullText("hr AND (john OR jahn)");
+        response = discoveryService.searchByFullText("hr AND (john OR jahn)", queryParams);
         Assert.assertNotNull(response);
         results = new JSONArray(response);
         Assert.assertEquals(results.length(), 1);
         row = (JSONObject) results.get(0);
         Assert.assertEquals(row.get("typeName"), "Person");
+
+        //verify limit and offset
+        //higher limit should return all results
+        results = new JSONArray(discoveryService.searchByFullText("Department", queryParams));
+        assertEquals(results.length(), 5);
+
+        //smaller limit should return those many rows
+        results = new JSONArray(discoveryService.searchByFullText("Department", new QueryParams(2, 0)));
+        assertEquals(results.length(), 2);
+
+        //offset should offset the results
+        results = new JSONArray(discoveryService.searchByFullText("Department", new QueryParams(5, 2)));
+        assertEquals(results.length(), 3);
+
+        //higher offset shouldn't return any rows
+        results = new JSONArray(discoveryService.searchByFullText("Department", new QueryParams(2, 6)));
+        assertEquals(results.length(), 0);
     }
 
     private ITypedReferenceableInstance createHiveTableInstance(Referenceable databaseInstance) throws Exception {
@@ -523,7 +688,7 @@ public class GraphBackedMetadataRepositoryTest {
         //        HashMap<String, Struct> partitionsMap = new HashMap<>();
         ArrayList<Struct> partitions = new ArrayList<>();
         for (int index = 0; index < 5; index++) {
-            Struct partitionInstance = new Struct("partition_type");
+            Struct partitionInstance = new Struct(TestUtils.PARTITION_STRUCT_TYPE);
             final String name = "partition_" + index;
             partitionInstance.set("name", name);
 
@@ -543,26 +708,31 @@ public class GraphBackedMetadataRepositoryTest {
         return tableType.convert(tableInstance, Multiplicity.REQUIRED);
     }
 
-    private String random() {
+    private String randomUTF() {
         return RandomStringUtils.random(10);
+    }
+
+    private String randomString() {
+        return RandomStringUtils.randomAlphanumeric(10);
     }
 
     @Test
     public void testUTFValues() throws Exception {
         Referenceable hrDept = new Referenceable("Department");
         Referenceable john = new Referenceable("Person");
-        john.set("name", random());
+        john.set("name", randomUTF());
         john.set("department", hrDept);
 
-        hrDept.set("name", random());
+        hrDept.set("name", randomUTF());
         hrDept.set("employees", ImmutableList.of(john));
 
         ClassType deptType = typeSystem.getDataType(ClassType.class, "Department");
         ITypedReferenceableInstance hrDept2 = deptType.convert(hrDept, Multiplicity.REQUIRED);
 
-        String[] guids = repositoryService.createEntities(hrDept2);
+        List<String> guids = repositoryService.createEntities(hrDept2);
         Assert.assertNotNull(guids);
-        Assert.assertEquals(guids.length, 1);
-        Assert.assertNotNull(guids[0]);
+        Assert.assertEquals(guids.size(), 2);
+        Assert.assertNotNull(guids.get(0));
+        Assert.assertNotNull(guids.get(1));
     }
 }

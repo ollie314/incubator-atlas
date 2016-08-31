@@ -30,6 +30,7 @@ import org.apache.atlas.query.TypeUtils;
 import org.apache.atlas.repository.Constants;
 import org.apache.atlas.repository.MetadataRepository;
 import org.apache.atlas.repository.graph.GraphBackedMetadataRepository;
+import org.apache.atlas.repository.graph.GraphHelper;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
 import org.apache.atlas.typesystem.ITypedStruct;
 import org.apache.atlas.typesystem.persistence.Id;
@@ -43,7 +44,7 @@ import org.apache.atlas.typesystem.types.TypeSystem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
+import javax.inject.Inject;
 import java.util.List;
 
 /**
@@ -55,6 +56,7 @@ public class DefaultGraphPersistenceStrategy implements GraphPersistenceStrategi
 
     private final GraphBackedMetadataRepository metadataRepository;
 
+    @Inject
     public DefaultGraphPersistenceStrategy(MetadataRepository metadataRepository) {
         this.metadataRepository = (GraphBackedMetadataRepository) metadataRepository;
     }
@@ -71,7 +73,11 @@ public class DefaultGraphPersistenceStrategy implements GraphPersistenceStrategi
 
     @Override
     public String edgeLabel(IDataType<?> dataType, AttributeInfo aInfo) {
-        return metadataRepository.getEdgeLabel(dataType, aInfo);
+        try {
+            return metadataRepository.getEdgeLabel(dataType, aInfo);
+        } catch (AtlasException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Override
@@ -90,7 +96,7 @@ public class DefaultGraphPersistenceStrategy implements GraphPersistenceStrategi
 
     @Override
     public List<String> traitNames(TitanVertex vertex) {
-        return metadataRepository.getTraitNames(vertex);
+        return GraphHelper.getTraitNames(vertex);
     }
 
     @Override
@@ -100,7 +106,7 @@ public class DefaultGraphPersistenceStrategy implements GraphPersistenceStrategi
 
     @Override
     public Id getIdFromVertex(String dataTypeName, TitanVertex vertex) {
-        return metadataRepository.getIdFromVertex(dataTypeName, vertex);
+        return GraphHelper.getIdFromVertex(dataTypeName, vertex);
     }
 
     @Override
@@ -134,9 +140,12 @@ public class DefaultGraphPersistenceStrategy implements GraphPersistenceStrategi
                 TypeSystem.IdType idType = TypeSystem.getInstance().getIdType();
 
                 if (dataType.getName().equals(idType.getName())) {
-                    structInstance.set(idType.typeNameAttrName(), structVertex.getProperty(typeAttributeName()));
-                    structInstance.set(idType.idAttrName(), structVertex.getProperty(idAttributeName()));
-
+                    structInstance.set(idType.typeNameAttrName(), GraphHelper.getProperty(structVertex, typeAttributeName()));
+                    structInstance.set(idType.idAttrName(), GraphHelper.getProperty(structVertex, idAttributeName()));
+                    String stateValue = GraphHelper.getProperty(structVertex, stateAttributeName());
+                    if (stateValue != null) {
+                        structInstance.set(idType.stateAttrName(), stateValue);
+                    }
                 } else {
                     metadataRepository.getGraphToInstanceMapper()
                         .mapVertexToInstance(structVertex, structInstance, structType.fieldMapping().fields);
@@ -220,6 +229,11 @@ public class DefaultGraphPersistenceStrategy implements GraphPersistenceStrategi
     @Override
     public String idAttributeName() {
         return metadataRepository.getIdAttributeName();
+    }
+
+    @Override
+    public String stateAttributeName() {
+        return metadataRepository.getStateAttributeName();
     }
 
     @Override

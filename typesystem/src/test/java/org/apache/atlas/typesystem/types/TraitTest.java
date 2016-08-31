@@ -19,13 +19,18 @@
 package org.apache.atlas.typesystem.types;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.ITypedStruct;
 import org.apache.atlas.typesystem.Struct;
+import org.apache.atlas.typesystem.TypesDef;
+import org.apache.atlas.typesystem.types.utils.TypesUtil;
 import org.testng.Assert;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -33,7 +38,7 @@ import static org.apache.atlas.typesystem.types.utils.TypesUtil.createOptionalAt
 import static org.apache.atlas.typesystem.types.utils.TypesUtil.createRequiredAttrDef;
 import static org.apache.atlas.typesystem.types.utils.TypesUtil.createTraitTypeDef;
 
-public class TraitTest extends BaseTest {
+public class TraitTest extends HierarchicalTypeTest<TraitType> {
 
 
     @BeforeMethod
@@ -65,11 +70,11 @@ public class TraitTest extends BaseTest {
         HierarchicalTypeDefinition A = createTraitTypeDef("A", null, createRequiredAttrDef("a", DataTypes.INT_TYPE),
                 createOptionalAttrDef("b", DataTypes.BOOLEAN_TYPE), createOptionalAttrDef("c", DataTypes.BYTE_TYPE),
                 createOptionalAttrDef("d", DataTypes.SHORT_TYPE));
-        HierarchicalTypeDefinition B = createTraitTypeDef("B", ImmutableList.<String>of("A"),
+        HierarchicalTypeDefinition B = createTraitTypeDef("B", ImmutableSet.<String>of("A"),
                 createOptionalAttrDef("b", DataTypes.BOOLEAN_TYPE));
         HierarchicalTypeDefinition C =
-                createTraitTypeDef("C", ImmutableList.<String>of("A"), createOptionalAttrDef("c", DataTypes.BYTE_TYPE));
-        HierarchicalTypeDefinition D = createTraitTypeDef("D", ImmutableList.<String>of("B", "C"),
+                createTraitTypeDef("C", ImmutableSet.<String>of("A"), createOptionalAttrDef("c", DataTypes.BYTE_TYPE));
+        HierarchicalTypeDefinition D = createTraitTypeDef("D", ImmutableSet.<String>of("B", "C"),
                 createOptionalAttrDef("d", DataTypes.SHORT_TYPE));
 
         defineTraits(A, B, C, D);
@@ -173,11 +178,11 @@ public class TraitTest extends BaseTest {
         HierarchicalTypeDefinition A = createTraitTypeDef("A", null, createRequiredAttrDef("a", DataTypes.INT_TYPE),
                 createOptionalAttrDef("b", DataTypes.BOOLEAN_TYPE), createOptionalAttrDef("c", DataTypes.BYTE_TYPE),
                 createOptionalAttrDef("d", DataTypes.SHORT_TYPE));
-        HierarchicalTypeDefinition B = createTraitTypeDef("B", ImmutableList.<String>of("A"),
+        HierarchicalTypeDefinition B = createTraitTypeDef("B", ImmutableSet.<String>of("A"),
                 createOptionalAttrDef("b", DataTypes.BOOLEAN_TYPE));
-        HierarchicalTypeDefinition C = createTraitTypeDef("C", ImmutableList.<String>of("A"),
+        HierarchicalTypeDefinition C = createTraitTypeDef("C", ImmutableSet.<String>of("A"),
                 createOptionalAttrDef("c", DataTypes.BYTE_TYPE));
-        HierarchicalTypeDefinition D = createTraitTypeDef("D", ImmutableList.<String>of("B", "C"),
+        HierarchicalTypeDefinition D = createTraitTypeDef("D", ImmutableSet.<String>of("B", "C"),
                 createOptionalAttrDef("d", DataTypes.SHORT_TYPE));
 
         defineTraits(B, D, A, C);
@@ -213,8 +218,30 @@ public class TraitTest extends BaseTest {
                 "\tA.C.D.c : \t3\n" +
                 "\tA.C.D.d : \t3\n" +
                 "}");
-
     }
 
+    @Override
+    protected HierarchicalTypeDefinition<TraitType> getTypeDefinition(String name, AttributeDefinition... attributes) {
+        return new HierarchicalTypeDefinition(TraitType.class, name, null, null, attributes);
+    }
+
+    @Override
+    protected HierarchicalTypeDefinition<TraitType> getTypeDefinition(String name, ImmutableSet<String> superTypes,
+                                                                      AttributeDefinition... attributes) {
+        return new HierarchicalTypeDefinition(TraitType.class, name, null, superTypes, attributes);
+    }
+
+    @Override
+    protected TypesDef getTypesDef(StructTypeDefinition typeDefinition) {
+        return TypesUtil.getTypesDef(ImmutableList.<EnumTypeDefinition>of(), ImmutableList.<StructTypeDefinition>of(),
+                ImmutableList.of((HierarchicalTypeDefinition<TraitType>) typeDefinition),
+                ImmutableList.<HierarchicalTypeDefinition<ClassType>>of());
+    }
+
+    @Override
+    protected TypesDef getTypesDef(HierarchicalTypeDefinition<TraitType>... typeDefinitions) {
+        return TypesUtil.getTypesDef(ImmutableList.<EnumTypeDefinition>of(), ImmutableList.<StructTypeDefinition>of(),
+                ImmutableList.copyOf(typeDefinitions), ImmutableList.<HierarchicalTypeDefinition<ClassType>>of());
+    }
 }
 

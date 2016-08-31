@@ -21,10 +21,12 @@ package org.apache.atlas.web.resources;
 import com.sun.jersey.api.client.ClientResponse;
 import org.apache.atlas.AtlasClient;
 import org.apache.atlas.AtlasException;
-import org.apache.atlas.TypeExistsException;
 import org.apache.atlas.services.MetadataService;
-import org.apache.atlas.typesystem.types.DataTypes;
+import org.apache.atlas.typesystem.exception.TypeExistsException;
+import org.apache.atlas.typesystem.types.cache.TypeCache;
+import org.apache.atlas.utils.AtlasPerfTracer;
 import org.apache.atlas.web.util.Servlets;
+import org.apache.commons.lang.StringUtils;
 import org.codehaus.jettison.json.JSONArray;
 import org.codehaus.jettison.json.JSONException;
 import org.codehaus.jettison.json.JSONObject;
@@ -35,17 +37,20 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.Consumes;
-import javax.ws.rs.DefaultValue;
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
+import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.Context;
+import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * This class provides RESTful API for Types.
@@ -59,11 +64,10 @@ import java.util.List;
 @Singleton
 public class TypesResource {
 
-    private static final Logger LOG = LoggerFactory.getLogger(EntityResource.class);
+    private static final Logger LOG = LoggerFactory.getLogger(TypesResource.class);
+    private static final Logger PERF_LOG = AtlasPerfTracer.getPerfLogger("rest.TypesResource");
 
     private final MetadataService metadataService;
-
-    static final String TYPE_ALL = "all";
 
     @Inject
     public TypesResource(MetadataService metadataService) {
@@ -75,12 +79,17 @@ public class TypesResource {
      * domain. Could represent things like Hive Database, Hive Table, etc.
      */
     @POST
-    @Consumes(Servlets.JSON_MEDIA_TYPE)
+    @Consumes({Servlets.JSON_MEDIA_TYPE, MediaType.APPLICATION_JSON})
     @Produces(Servlets.JSON_MEDIA_TYPE)
     public Response submit(@Context HttpServletRequest request) {
+        AtlasPerfTracer perf = null;
         try {
+            if (AtlasPerfTracer.isPerfTraceEnabled(PERF_LOG)) {
+                perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "TypesResource.submit()");
+            }
+
             final String typeDefinition = Servlets.getRequestPayload(request);
-            LOG.debug("Creating type with definition {} ", typeDefinition);
+            LOG.info("Creating type with definition {} ", typeDefinition);
 
             JSONObject typesJson = metadataService.createType(typeDefinition);
             final JSONArray typesJsonArray = typesJson.getJSONArray(AtlasClient.TYPES);
@@ -106,6 +115,59 @@ public class TypesResource {
         } catch (Throwable e) {
             LOG.error("Unable to persist types", e);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.INTERNAL_SERVER_ERROR));
+        } finally {
+            AtlasPerfTracer.log(perf);
+        }
+    }
+
+    /**
+     * Update of existing types - if the given type doesn't exist, creates new type
+     * Allowed updates are:
+     * 1. Add optional attribute
+     * 2. Change required to optional attribute
+     * 3. Add super types - super types shouldn't contain any required attributes
+     * @param request
+     * @return
+     */
+    @PUT
+    @Consumes({Servlets.JSON_MEDIA_TYPE, MediaType.APPLICATION_JSON})
+    @Produces(Servlets.JSON_MEDIA_TYPE)
+    public Response update(@Context HttpServletRequest request) {
+        AtlasPerfTracer perf = null;
+        try {
+            if (AtlasPerfTracer.isPerfTraceEnabled(PERF_LOG)) {
+                perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "TypesResource.update()");
+            }
+
+            final String typeDefinition = Servlets.getRequestPayload(request);
+            LOG.info("Updating type with definition {} ", typeDefinition);
+
+            JSONObject typesJson = metadataService.updateType(typeDefinition);
+            final JSONArray typesJsonArray = typesJson.getJSONArray(AtlasClient.TYPES);
+
+            JSONArray typesResponse = new JSONArray();
+            for (int i = 0; i < typesJsonArray.length(); i++) {
+                final String name = typesJsonArray.getString(i);
+                typesResponse.put(new JSONObject() {{
+                    put(AtlasClient.NAME, name);
+                }});
+            }
+
+            JSONObject response = new JSONObject();
+            response.put(AtlasClient.REQUEST_ID, Servlets.getRequestId());
+            response.put(AtlasClient.TYPES, typesResponse);
+            return Response.ok().entity(response).build();
+        } catch (TypeExistsException e) {
+            LOG.error("Type already exists", e);
+            throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.CONFLICT));
+        } catch (AtlasException | IllegalArgumentException e) {
+            LOG.error("Unable to persist types", e);
+            throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.BAD_REQUEST));
+        } catch (Throwable e) {
+            LOG.error("Unable to persist types", e);
+            throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.INTERNAL_SERVER_ERROR));
+        } finally {
+            AtlasPerfTracer.log(perf);
         }
     }
 
@@ -118,7 +180,12 @@ public class TypesResource {
     @Path("{typeName}")
     @Produces(Servlets.JSON_MEDIA_TYPE)
     public Response getDefinition(@Context HttpServletRequest request, @PathParam("typeName") String typeName) {
+        AtlasPerfTracer perf = null;
         try {
+            if (AtlasPerfTracer.isPerfTraceEnabled(PERF_LOG)) {
+                perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "TypesResource.getDefinition(" + typeName + ")");
+            }
+
             final String typeDefinition = metadataService.getTypeDefinition(typeName);
 
             JSONObject response = new JSONObject();
@@ -136,29 +203,39 @@ public class TypesResource {
         } catch (Throwable e) {
             LOG.error("Unable to get type definition for type {}", typeName, e);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.INTERNAL_SERVER_ERROR));
+        } finally {
+            AtlasPerfTracer.log(perf);
         }
     }
 
     /**
-     * Gets the list of trait type names registered in the type system.
+     * Return the list of type names in the type system which match the specified filter.
      *
-     * @param type type should be the name of enum
-     *             org.apache.atlas.typesystem.types.DataTypes.TypeCategory
-     *             Typically, would be one of all, TRAIT, CLASS, ENUM, STRUCT
-     * @return entity names response payload as json
+     * @return list of type names
+     * @param typeCategory returns types whose category is the given typeCategory
+     * @param supertype returns types which contain the given supertype
+     * @param notsupertype returns types which do not contain the given supertype
+     *
+     * Its possible to specify combination of these filters in one request and the conditions are combined with AND
+     * For example, typeCategory = TRAIT && supertype contains 'X' && supertype !contains 'Y'
+     * If there is no filter, all the types are returned
      */
     @GET
     @Produces(Servlets.JSON_MEDIA_TYPE)
-    public Response getTypesByFilter(@Context HttpServletRequest request,
-            @DefaultValue(TYPE_ALL) @QueryParam("type") String type) {
+    public Response getTypesByFilter(@Context HttpServletRequest request, @QueryParam("type") String typeCategory,
+                                     @QueryParam("supertype") String supertype,
+                                     @QueryParam("notsupertype") String notsupertype) {
+        AtlasPerfTracer perf = null;
         try {
-            List<String> result;
-            if (TYPE_ALL.equals(type)) {
-                result = metadataService.getTypeNamesList();
-            } else {
-                DataTypes.TypeCategory typeCategory = DataTypes.TypeCategory.valueOf(type);
-                result = metadataService.getTypeNamesByCategory(typeCategory);
+            if (AtlasPerfTracer.isPerfTraceEnabled(PERF_LOG)) {
+                perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "TypesResource.getTypesByFilter(" + typeCategory + ")");
             }
+
+            Map<TypeCache.TYPE_FILTER, String> filterMap = new HashMap<>();
+            addToFilterIfNotEmpty(filterMap, TypeCache.TYPE_FILTER.CATEGORY, typeCategory);
+            addToFilterIfNotEmpty(filterMap, TypeCache.TYPE_FILTER.SUPERTYPE, supertype);
+            addToFilterIfNotEmpty(filterMap, TypeCache.TYPE_FILTER.NOT_SUPERTYPE, notsupertype);
+            List<String> result = metadataService.getTypeNames(filterMap);
 
             JSONObject response = new JSONObject();
             response.put(AtlasClient.RESULTS, new JSONArray(result));
@@ -167,12 +244,21 @@ public class TypesResource {
 
             return Response.ok(response).build();
         } catch (IllegalArgumentException | AtlasException ie) {
-            LOG.error("Unsupported typeName while retrieving type list {}", type);
+            LOG.error("Unsupported typeName while retrieving type list {}", typeCategory);
             throw new WebApplicationException(
-                    Servlets.getErrorResponse("Unsupported type " + type, Response.Status.BAD_REQUEST));
+                    Servlets.getErrorResponse(new Exception("Unsupported type " + typeCategory, ie), Response.Status.BAD_REQUEST));
         } catch (Throwable e) {
             LOG.error("Unable to get types list", e);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.INTERNAL_SERVER_ERROR));
+        } finally {
+            AtlasPerfTracer.log(perf);
+        }
+    }
+
+    private void addToFilterIfNotEmpty(Map<TypeCache.TYPE_FILTER, String> filterMap, TypeCache.TYPE_FILTER filterType,
+                                       String filterValue) {
+        if (StringUtils.isNotEmpty(filterValue)) {
+            filterMap.put(filterType, filterValue);
         }
     }
 }

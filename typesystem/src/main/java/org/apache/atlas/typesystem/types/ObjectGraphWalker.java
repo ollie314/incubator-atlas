@@ -76,7 +76,9 @@ public class ObjectGraphWalker {
     public void walk() throws AtlasException {
         while (!queue.isEmpty()) {
             IReferenceableInstance r = queue.poll();
-            processReferenceableInstance(r);
+            if(r != null) {
+                processReferenceableInstance(r);
+            }
         }
     }
 
@@ -213,6 +215,12 @@ public class ObjectGraphWalker {
             this.attributeName = attributeName;
             this.aInfo = aInfo;
             this.value = value;
+        }
+
+        @Override
+        public String toString(){
+            StringBuilder string = new StringBuilder().append(instance).append(aInfo).append(value);
+            return string.toString();
         }
     }
 }

@@ -33,6 +33,9 @@ public interface IInstance {
 
     void set(String attrName, Object val) throws AtlasException;
 
+    void setNull(String attrName) throws AtlasException;
+
     Map<String, Object> getValuesMap() throws AtlasException;
 
+    String toShortString();
 }

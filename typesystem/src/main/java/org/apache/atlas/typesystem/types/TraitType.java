@@ -18,13 +18,17 @@
 
 package org.apache.atlas.typesystem.types;
 
-import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.ITypedStruct;
 
+import java.nio.charset.Charset;
+import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class TraitType extends HierarchicalType<TraitType, IStruct>
         implements IConstructableType<IStruct, ITypedStruct> {
@@ -32,18 +36,15 @@ public class TraitType extends HierarchicalType<TraitType, IStruct>
     public final Map<AttributeInfo, List<String>> infoToNameMap;
     private final TypedStructHandler handler;
 
-    /**
-     * Used when creating a TraitType, to support recursive Structs.
-     */
-    TraitType(TypeSystem typeSystem, String name, ImmutableList<String> superTraits, int numFields) {
-        super(typeSystem, TraitType.class, name, superTraits, numFields);
+    TraitType(TypeSystem typeSystem, String name, String description, ImmutableSet<String> superTraits, int numFields) {
+        super(typeSystem, TraitType.class, name, description, superTraits, numFields);
         handler = null;
         infoToNameMap = null;
     }
 
-    TraitType(TypeSystem typeSystem, String name, ImmutableList<String> superTraits, AttributeInfo... fields)
+    TraitType(TypeSystem typeSystem, String name, String description, ImmutableSet<String> superTraits, AttributeInfo... fields)
     throws AtlasException {
-        super(typeSystem, TraitType.class, name, superTraits, fields);
+        super(typeSystem, TraitType.class, name, description, superTraits, fields);
         handler = new TypedStructHandler(this);
         infoToNameMap = TypeUtils.buildAttrInfoToNameMap(fieldMapping);
     }
@@ -63,8 +64,26 @@ public class TraitType extends HierarchicalType<TraitType, IStruct>
     }
 
     @Override
-    public void output(IStruct s, Appendable buf, String prefix) throws AtlasException {
-        handler.output(s, buf, prefix);
+    public void output(IStruct s, Appendable buf, String prefix, Set<IStruct> inProcess) throws AtlasException {
+        handler.output(s, buf, prefix, inProcess);
+    }
+
+    @Override
+    public void updateSignatureHash(MessageDigest digester, Object val) throws AtlasException {
+        if( !(val instanceof  ITypedStruct)) {
+            throw new IllegalArgumentException("Unexpected value type " + val.getClass().getSimpleName() + ". Expected instance of ITypedStruct");
+        }
+        digester.update(getName().getBytes(Charset.forName("UTF-8")));
+
+        if(fieldMapping.fields != null && val != null) {
+            IStruct typedValue = (IStruct) val;
+            for (AttributeInfo aInfo : fieldMapping.fields.values()) {
+                Object attrVal = typedValue.get(aInfo.name);
+                if(attrVal != null) {
+                    aInfo.dataType().updateSignatureHash(digester, attrVal);
+                }
+            }
+        }
     }
 
     @Override

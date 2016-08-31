@@ -16,6 +16,8 @@
 # resolve links - $0 may be a softlink
 PRG="${0}"
 
+[[ `uname -s` == *"CYGWIN"* ]] && CYGWIN=true
+
 while [ -h "${PRG}" ]; do
   ls=`ls -ld "${PRG}"`
   link=`expr "$ls" : '.*-> \(.*\)$'`
@@ -29,69 +31,104 @@ done
 BASEDIR=`dirname ${PRG}`
 BASEDIR=`cd ${BASEDIR}/..;pwd`
 
-if [ -z "$METADATA_CONF" ]; then
-  METADATA_CONF=${BASEDIR}/conf
-fi
-export METADATA_CONF
-
-if [ -f "${METADATA_CONF}/atlas-env.sh" ]; then
-  . "${METADATA_CONF}/atlas-env.sh"
-fi
-
-if test -z ${JAVA_HOME}
+if test -z "${JAVA_HOME}"
 then
     JAVA_BIN=`which java`
     JAR_BIN=`which jar`
 else
-    JAVA_BIN=${JAVA_HOME}/bin/java
-    JAR_BIN=${JAVA_HOME}/bin/jar
+    JAVA_BIN="${JAVA_HOME}/bin/java"
+    JAR_BIN="${JAVA_HOME}/bin/jar"
 fi
 export JAVA_BIN
 
-if [ ! -e $JAVA_BIN ] || [ ! -e $JAR_BIN ]; then
+if [ ! -e "${JAVA_BIN}" ] || [ ! -e "${JAR_BIN}" ]; then
   echo "$JAVA_BIN and/or $JAR_BIN not found on the system. Please make sure java and jar commands are available."
   exit 1
 fi
 
-METADATACPPATH="$METADATA_CONF"
-
-for i in "${BASEDIR}/bridge/hive/"*.jar; do
-  METADATACPPATH="${METADATACPPATH}:$i"
-done
-
-for i in "${BASEDIR}/hook/hive/"*.jar; do
-  METADATACPPATH="${METADATACPPATH}:$i"
+# Construct Atlas classpath using jars from hook/hive/atlas-hive-plugin-impl/ directory.
+for i in "${BASEDIR}/hook/hive/atlas-hive-plugin-impl/"*.jar; do
+  ATLASCPPATH="${ATLASCPPATH}:$i"
 done
 
 # log dir for applications
-METADATA_LOG_DIR="${METADATA_LOG_DIR:-$BASEDIR/logs}"
-export METADATA_LOG_DIR
+ATLAS_LOG_DIR="${ATLAS_LOG_DIR:-$BASEDIR/logs}"
+export ATLAS_LOG_DIR
+LOGFILE="$ATLAS_LOG_DIR/import-hive.log"
 
-JAVA_PROPERTIES="$METADATA_OPTS -Datlas.log.dir=$METADATA_LOG_DIR -Datlas.log.file=import-hive.log -Dlog4j.configuration=atlas-log4j.xml"
+TIME=`date +%Y%m%d%H%M%s`
+
+#Add hive conf in classpath
+if [ ! -z "$HIVE_CONF_DIR" ]; then
+    HIVE_CONF=$HIVE_CONF_DIR
+elif [ ! -z "$HIVE_HOME" ]; then
+    HIVE_CONF="$HIVE_HOME/conf"
+elif [ -e /etc/hive/conf ]; then
+    HIVE_CONF="/etc/hive/conf"
+else
+    echo "Could not find a valid HIVE configuration"
+    exit 1
+fi
+
+echo Using Hive configuration directory ["$HIVE_CONF"]
+
+
+if [ -f "${HIVE_CONF}/hive-env.sh" ]; then
+  . "${HIVE_CONF}/hive-env.sh"
+fi
+
+if [ -z "$HIVE_HOME" ]; then
+    if [ -d "${BASEDIR}/../hive" ]; then
+        HIVE_HOME=${BASEDIR}/../hive
+    else
+        echo "Please set HIVE_HOME to the root of Hive installation"
+        exit 1
+    fi
+fi
+
+HIVE_CP="${HIVE_CONF}"
+
+for i in "${HIVE_HOME}/lib/"*.jar; do
+    HIVE_CP="${HIVE_CP}:$i"
+done
+
+#Add hadoop conf in classpath
+if [ ! -z "$HADOOP_CLASSPATH" ]; then
+    HADOOP_CP=$HADOOP_CLASSPATH
+elif [ ! -z "$HADOOP_HOME" ]; then
+    HADOOP_CP=`$HADOOP_HOME/bin/hadoop classpath`
+elif [ $(command -v hadoop) ]; then
+    HADOOP_CP=`hadoop classpath`
+    echo $HADOOP_CP
+else
+    echo "Environment variable HADOOP_CLASSPATH or HADOOP_HOME need to be set"
+    exit 1
+fi
+
+CP="${ATLASCPPATH}:${HIVE_CP}:${HADOOP_CP}"
+
+# If running in cygwin, convert pathnames and classpath to Windows format.
+if [ "${CYGWIN}" == "true" ]
+then
+   ATLAS_LOG_DIR=`cygpath -w ${ATLAS_LOG_DIR}`
+   LOGFILE=`cygpath -w ${LOGFILE}`
+   HIVE_CP=`cygpath -w ${HIVE_CP}`
+   HADOOP_CP=`cygpath -w ${HADOOP_CP}`
+   CP=`cygpath -w -p ${CP}`
+fi
+
+JAVA_PROPERTIES="$ATLAS_OPTS -Datlas.log.dir=$ATLAS_LOG_DIR -Datlas.log.file=import-hive.log
+-Dlog4j.configuration=atlas-log4j.xml"
 shift
 
 while [[ ${1} =~ ^\-D ]]; do
   JAVA_PROPERTIES="${JAVA_PROPERTIES} ${1}"
   shift
 done
-TIME=`date +%Y%m%d%H%M%s`
 
-#Add hive conf in classpath
-if [ ! -z "$HIVE_CONF_DIR" ]; then
-    HIVE_CP=$HIVE_CONF_DIR
-elif [ ! -z "$HIVE_HOME" ]; then
-    HIVE_CP="$HIVE_HOME/conf"
-elif [ -e /etc/hive/conf ]; then
-    HIVE_CP="/etc/hive/conf"
-else
-    echo "Could not find a valid HIVE configuration"
-    exit 1
-fi
-export HIVE_CP
-echo Using Hive configuration directory [$HIVE_CP]
-echo "Logs for import are in $METADATA_LOG_DIR/import-hive.log"
+echo "Log file for import is $LOGFILE"
 
-${JAVA_BIN} ${JAVA_PROPERTIES} -cp ${HIVE_CP}:${METADATACPPATH} org.apache.atlas.hive.bridge.HiveMetaStoreBridge
+"${JAVA_BIN}" ${JAVA_PROPERTIES} -cp "${CP}" org.apache.atlas.hive.bridge.HiveMetaStoreBridge
 
 RETVAL=$?
 [ $RETVAL -eq 0 ] && echo Hive Data Model imported successfully!!!
