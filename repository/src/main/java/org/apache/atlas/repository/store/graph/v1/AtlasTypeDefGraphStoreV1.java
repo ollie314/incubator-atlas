@@ -19,6 +19,7 @@ package org.apache.atlas.repository.store.graph.v1;
 
 import com.google.common.base.Preconditions;
 
+import com.google.inject.Inject;
 import org.apache.atlas.exception.AtlasBaseException;
 import org.apache.atlas.model.typedef.AtlasBaseTypeDef;
 import org.apache.atlas.model.typedef.AtlasClassificationDef;
@@ -31,7 +32,12 @@ import org.apache.atlas.repository.graphdb.AtlasEdge;
 import org.apache.atlas.repository.graphdb.AtlasEdgeDirection;
 import org.apache.atlas.repository.graphdb.AtlasGraph;
 import org.apache.atlas.repository.graphdb.AtlasVertex;
+import org.apache.atlas.repository.store.graph.AtlasClassificationDefStore;
+import org.apache.atlas.repository.store.graph.AtlasEntityDefStore;
+import org.apache.atlas.repository.store.graph.AtlasEnumDefStore;
+import org.apache.atlas.repository.store.graph.AtlasStructDefStore;
 import org.apache.atlas.repository.store.graph.AtlasTypeDefGraphStore;
+import org.apache.atlas.type.AtlasTypeRegistry;
 import org.apache.atlas.typesystem.types.DataTypes.TypeCategory;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -57,18 +63,48 @@ public class AtlasTypeDefGraphStoreV1 extends AtlasTypeDefGraphStore {
 
     protected final AtlasGraph atlasGraph = AtlasGraphProvider.getGraphInstance();
 
-    public AtlasTypeDefGraphStoreV1() {
-        super();
+    @Inject
+    public AtlasTypeDefGraphStoreV1(AtlasTypeRegistry typeRegistry) {
+        super(typeRegistry);
 
-        enumDefStore           = new AtlasEnumDefStoreV1(this);
-        structDefStore         = new AtlasStructDefStoreV1(this);
-        classificationDefStore = new AtlasClassificationDefStoreV1(this);
-        entityDefStore         = new AtlasEntityDefStoreV1(this);
+        LOG.info("==> AtlasTypeDefGraphStoreV1()");
+
+        try {
+            init();
+        } catch(AtlasBaseException excp) {
+            LOG.error("failed to initialize types from graph store", excp);
+        }
+
+        LOG.info("<== AtlasTypeDefGraphStoreV1()");
     }
 
     @Override
-    public void init() {
+    protected AtlasEnumDefStore getEnumDefStore(AtlasTypeRegistry typeRegistry) {
+        return new AtlasEnumDefStoreV1(this, typeRegistry);
+    }
 
+    @Override
+    protected AtlasStructDefStore getStructDefStore(AtlasTypeRegistry typeRegistry) {
+        return new AtlasStructDefStoreV1(this, typeRegistry);
+    }
+
+    @Override
+    protected AtlasClassificationDefStore getClassificationDefStore(AtlasTypeRegistry typeRegistry) {
+        return new AtlasClassificationDefStoreV1(this, typeRegistry);
+    }
+
+    @Override
+    protected AtlasEntityDefStore getEntityDefStore(AtlasTypeRegistry typeRegistry) {
+        return new AtlasEntityDefStoreV1(this, typeRegistry);
+    }
+
+    @Override
+    public void init() throws AtlasBaseException {
+        LOG.info("==> AtlasTypeDefGraphStoreV1.init()");
+
+        super.init();
+
+        LOG.info("<== AtlasTypeDefGraphStoreV1.init()");
     }
 
     public AtlasGraph getAtlasGraph() { return atlasGraph; }
@@ -160,6 +196,14 @@ public class AtlasTypeDefGraphStoreV1 extends AtlasTypeDefGraphStore {
         ret.setProperty(Constants.VERSION_PROPERTY_KEY, typeDef.getVersion());
 
         return ret;
+    }
+
+    public void deleteTypeVertexOutEdges(AtlasVertex vertex) throws AtlasBaseException {
+        Iterable<AtlasEdge> edges = vertex.getEdges(AtlasEdgeDirection.OUT);
+
+        for (AtlasEdge edge : edges) {
+            atlasGraph.removeEdge(edge);
+        }
     }
 
     public void deleteTypeVertex(AtlasVertex vertex) throws AtlasBaseException {
@@ -267,10 +311,10 @@ public class AtlasTypeDefGraphStoreV1 extends AtlasTypeDefGraphStore {
         return ret;
     }
 
-    public void createSuperTypeEdges(AtlasVertex vertex, Set<String> superTypes) {
+    public void createSuperTypeEdges(AtlasVertex vertex, Set<String> superTypes, TypeCategory typeCategory) {
         if (CollectionUtils.isNotEmpty(superTypes)) {
             for (String superType : superTypes) {
-                AtlasVertex superTypeVertex = findTypeVertexByNameAndCategory(superType, TypeCategory.CLASS);
+                AtlasVertex superTypeVertex = findTypeVertexByNameAndCategory(superType, typeCategory);
 
                 getOrCreateEdge(vertex, superTypeVertex, AtlasGraphUtilsV1.SUPERTYPE_EDGE_LABEL);
             }

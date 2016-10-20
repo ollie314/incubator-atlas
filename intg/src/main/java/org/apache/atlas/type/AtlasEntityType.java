@@ -45,7 +45,7 @@ public class AtlasEntityType extends AtlasStructType {
     private Set<String>           allSuperTypes = Collections.emptySet();
 
     public AtlasEntityType(AtlasEntityDef entityDef) {
-        super(entityDef);
+        super(entityDef, TypeCategory.ENTITY);
 
         this.entityDef = entityDef;
     }
@@ -68,7 +68,7 @@ public class AtlasEntityType extends AtlasStructType {
         for (String superTypeName : entityDef.getSuperTypes()) {
             AtlasType superType = typeRegistry.getType(superTypeName);
 
-            if (superType != null && superType instanceof AtlasEntityType) {
+            if (superType instanceof AtlasEntityType) {
                 AtlasEntityType superEntityType = (AtlasEntityType)superType;
 
                 superEntityType.resolveReferences(typeRegistry);
@@ -80,13 +80,8 @@ public class AtlasEntityType extends AtlasStructType {
                     allS.addAll(superEntityType.getAllSuperTypes());
                 }
             } else {
-                String msg = superTypeName + ((superType == null) ? ": unknown" : ": incompatible");
-
-                msg += (" supertype in entity " + entityDef.getName());
-
-                LOG.error(msg);
-
-                throw new AtlasBaseException(msg);
+                throw new AtlasBaseException(superTypeName + ": incompatible supertype in entity "
+                                             + entityDef.getName());
             }
         }
 

@@ -43,8 +43,6 @@ public interface AtlasTypeDefStore {
 
     AtlasEnumDef createEnumDef(AtlasEnumDef enumDef) throws AtlasBaseException;
 
-    List<AtlasEnumDef> createEnumDefs(List<AtlasEnumDef> atlasEnumDefs) throws AtlasBaseException;
-
     List<AtlasEnumDef> getAllEnumDefs() throws AtlasBaseException;
 
     AtlasEnumDef getEnumDefByName(String name) throws AtlasBaseException;
@@ -65,8 +63,6 @@ public interface AtlasTypeDefStore {
     /** StructDef operation **/
     /*************************/
     AtlasStructDef createStructDef(AtlasStructDef structDef) throws AtlasBaseException;
-
-    List<AtlasStructDef> createStructDefs(List<AtlasStructDef> structDefs) throws AtlasBaseException;
 
     List<AtlasStructDef> getAllStructDefs() throws AtlasBaseException;
 
@@ -90,8 +86,6 @@ public interface AtlasTypeDefStore {
     /*********************************/
     AtlasClassificationDef createClassificationDef(AtlasClassificationDef classificationDef) throws AtlasBaseException;
 
-    List<AtlasClassificationDef> createClassificationDefs(List<AtlasClassificationDef> classificationDefs) throws AtlasBaseException;
-
     List<AtlasClassificationDef> getAllClassificationDefs() throws AtlasBaseException;
 
     AtlasClassificationDef getClassificationDefByName(String name) throws AtlasBaseException;
@@ -114,9 +108,7 @@ public interface AtlasTypeDefStore {
     /*************************/
     /** EntityDef operation **/
     /*************************/
-    AtlasEntityDef createEntityDefs(AtlasEntityDef entityDef) throws AtlasBaseException;
-
-    List<AtlasEntityDef> createEntityDefs(List<AtlasEntityDef> entityDefs) throws AtlasBaseException;
+    AtlasEntityDef createEntityDef(AtlasEntityDef entityDef) throws AtlasBaseException;
 
     List<AtlasEntityDef> getAllEntityDefs() throws AtlasBaseException;
 
@@ -139,6 +131,8 @@ public interface AtlasTypeDefStore {
     AtlasTypesDef createTypesDef(AtlasTypesDef atlasTypesDef) throws AtlasBaseException;
 
     AtlasTypesDef updateTypesDef(AtlasTypesDef atlasTypesDef) throws AtlasBaseException;
+
+    void deleteTypesDef(AtlasTypesDef atlasTypesDef) throws AtlasBaseException;
 
     AtlasTypesDef searchTypesDef(SearchFilter searchFilter) throws AtlasBaseException;
 }

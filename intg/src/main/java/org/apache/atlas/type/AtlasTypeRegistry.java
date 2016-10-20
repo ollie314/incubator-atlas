@@ -17,13 +17,22 @@
  */
 package org.apache.atlas.type;
 
+import com.sun.jersey.spi.resource.Singleton;
 import org.apache.atlas.exception.AtlasBaseException;
-import org.apache.atlas.model.typedef.*;
+import org.apache.atlas.model.typedef.AtlasBaseTypeDef;
+import org.apache.atlas.model.typedef.AtlasClassificationDef;
+import org.apache.atlas.model.typedef.AtlasEntityDef;
+import org.apache.atlas.model.typedef.AtlasEnumDef;
+import org.apache.atlas.model.typedef.AtlasStructDef;
+import org.apache.atlas.model.typedef.AtlasTypesDef;
+
 import static org.apache.atlas.model.typedef.AtlasBaseTypeDef.ATLAS_TYPE_ARRAY_PREFIX;
 import static org.apache.atlas.model.typedef.AtlasBaseTypeDef.ATLAS_TYPE_ARRAY_SUFFIX;
 import static org.apache.atlas.model.typedef.AtlasBaseTypeDef.ATLAS_TYPE_MAP_PREFIX;
 import static org.apache.atlas.model.typedef.AtlasBaseTypeDef.ATLAS_TYPE_MAP_SUFFIX;
 import static org.apache.atlas.model.typedef.AtlasBaseTypeDef.ATLAS_TYPE_MAP_KEY_VAL_SEP;
+
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,406 +45,714 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * registry for all types defined in Atlas.
  */
+@Singleton
 public class AtlasTypeRegistry {
     private static final Logger LOG = LoggerFactory.getLogger(AtlasStructType.class);
 
-    private final Map<String, AtlasType>               allTypes;
-    private final TypeDefCache<AtlasEnumDef>           enumDefs;
-    private final TypeDefCache<AtlasStructDef>         structDefs;
-    private final TypeDefCache<AtlasClassificationDef> classificationDefs;
-    private final TypeDefCache<AtlasEntityDef>         entityDefs;
-
+    protected RegistryData registryData;
 
     public AtlasTypeRegistry() {
-        allTypes           = new ConcurrentHashMap<>();
-        enumDefs           = new TypeDefCache<>(this);
-        structDefs         = new TypeDefCache<>(this);
-        classificationDefs = new TypeDefCache<>(this);
-        entityDefs         = new TypeDefCache<>(this);
-
-        registerType(new AtlasBuiltInTypes.AtlasBooleanType());
-        registerType(new AtlasBuiltInTypes.AtlasByteType());
-        registerType(new AtlasBuiltInTypes.AtlasShortType());
-        registerType(new AtlasBuiltInTypes.AtlasIntType());
-        registerType(new AtlasBuiltInTypes.AtlasLongType());
-        registerType(new AtlasBuiltInTypes.AtlasFloatType());
-        registerType(new AtlasBuiltInTypes.AtlasDoubleType());
-        registerType(new AtlasBuiltInTypes.AtlasBigIntegerType());
-        registerType(new AtlasBuiltInTypes.AtlasBigDecimalType());
-        registerType(new AtlasBuiltInTypes.AtlasDateType());
-        registerType(new AtlasBuiltInTypes.AtlasStringType());
-        registerType(new AtlasBuiltInTypes.AtlasObjectIdType());
+        registryData = new RegistryData();
     }
 
-    public void resolveReferences() throws AtlasBaseException {
-        for (Map.Entry<String, AtlasType> e : allTypes.entrySet()) {
-            e.getValue().resolveReferences(this);
-        }
+    protected AtlasTypeRegistry(AtlasTypeRegistry other) {
+        registryData = new RegistryData(other.registryData);
     }
 
-    public Collection<String> getAllTypeNames() { return Collections.unmodifiableSet(allTypes.keySet()); }
+    public Collection<String> getAllTypeNames() { return registryData.allTypes.getAllTypeNames(); }
 
-    public AtlasType getType(String typeName) {
+    public AtlasType getType(String typeName) throws AtlasBaseException {
         if (LOG.isDebugEnabled()) {
             LOG.debug("==> AtlasTypeRegistry.getType({})", typeName);
         }
 
-        AtlasType ret = allTypes.get(typeName);
+        AtlasType ret = registryData.allTypes.getTypeByName(typeName);
 
         if (ret == null) {
-            try {
-                if (typeName.startsWith(ATLAS_TYPE_ARRAY_PREFIX) && typeName.endsWith(ATLAS_TYPE_ARRAY_SUFFIX)) {
-                    int startIdx = ATLAS_TYPE_ARRAY_PREFIX.length();
-                    int endIdx = typeName.length() - ATLAS_TYPE_ARRAY_SUFFIX.length();
-                    String elementTypeName = typeName.substring(startIdx, endIdx);
+            if (typeName.startsWith(ATLAS_TYPE_ARRAY_PREFIX) && typeName.endsWith(ATLAS_TYPE_ARRAY_SUFFIX)) {
+                int    startIdx        = ATLAS_TYPE_ARRAY_PREFIX.length();
+                int    endIdx          = typeName.length() - ATLAS_TYPE_ARRAY_SUFFIX.length();
+                String elementTypeName = typeName.substring(startIdx, endIdx);
 
-                    ret = new AtlasArrayType(elementTypeName, this);
-                } else if (typeName.startsWith(ATLAS_TYPE_MAP_PREFIX) && typeName.endsWith(ATLAS_TYPE_MAP_SUFFIX)) {
-                    int startIdx = ATLAS_TYPE_MAP_PREFIX.length();
-                    int endIdx = typeName.length() - ATLAS_TYPE_MAP_SUFFIX.length();
-                    String[] keyValueTypes = typeName.substring(startIdx, endIdx).split(ATLAS_TYPE_MAP_KEY_VAL_SEP, 2);
-                    String keyTypeName = keyValueTypes.length > 0 ? keyValueTypes[0] : null;
-                    String valueTypeName = keyValueTypes.length > 1 ? keyValueTypes[1] : null;
+                ret = new AtlasArrayType(elementTypeName, this);
+            } else if (typeName.startsWith(ATLAS_TYPE_MAP_PREFIX) && typeName.endsWith(ATLAS_TYPE_MAP_SUFFIX)) {
+                int      startIdx      = ATLAS_TYPE_MAP_PREFIX.length();
+                int      endIdx        = typeName.length() - ATLAS_TYPE_MAP_SUFFIX.length();
+                String[] keyValueTypes = typeName.substring(startIdx, endIdx).split(ATLAS_TYPE_MAP_KEY_VAL_SEP, 2);
+                String   keyTypeName   = keyValueTypes.length > 0 ? keyValueTypes[0] : null;
+                String   valueTypeName = keyValueTypes.length > 1 ? keyValueTypes[1] : null;
 
-                    ret = new AtlasMapType(keyTypeName, valueTypeName, this);
-                }
-            } catch(AtlasBaseException excp) {
-                LOG.warn("failed to instantiate type for " + typeName, excp);
+                ret = new AtlasMapType(keyTypeName, valueTypeName, this);
+            } else {
+                throw new AtlasBaseException(typeName + ": unknown typename");
             }
         }
 
         if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.getType({})", typeName);
+            LOG.debug("<== AtlasTypeRegistry.getType({}): {}", typeName, ret);
+        }
+
+        return ret;
+    }
+
+    public AtlasType getTypeByGuid(String guid) {
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("==> AtlasTypeRegistry.getTypeByGuid({})", guid);
+        }
+
+        AtlasType ret = registryData.allTypes.getTypeByGuid(guid);
+
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("<== AtlasTypeRegistry.getTypeByGuid({}): {}", guid, ret);
         }
 
         return ret;
     }
 
 
-    public void addEnumDef(AtlasEnumDef enumDef) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.addEnumDef({})", enumDef);
-        }
-
-        enumDefs.addType(enumDef, new AtlasEnumType(enumDef));
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.addEnumDef({})", enumDef);
-        }
-    }
-
-    public Collection<AtlasEnumDef> getAllEnumDefs() { return enumDefs.getAll(); }
+    public Collection<AtlasEnumDef> getAllEnumDefs() { return registryData.enumDefs.getAll(); }
 
     public AtlasEnumDef getEnumDefByGuid(String guid) {
-        return enumDefs.getTypeDefByGuid(guid);
+        return registryData.enumDefs.getTypeDefByGuid(guid);
     }
 
     public AtlasEnumDef getEnumDefByName(String name) {
-        return enumDefs.getTypeDefByName(name);
-    }
-
-    public void removeEnumDefByGuid(String guid) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.removeEnumDefByGuid({})", guid);
-        }
-
-        AtlasEnumDef enumDef = enumDefs.getTypeDefByGuid(guid);
-
-        if (enumDef != null) {
-            enumDefs.removeTypeDefByGuid(guid);
-        }
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.removeEnumDefByGuid({})", guid);
-        }
-    }
-
-    public void removeEnumDefByName(String name) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.removeEnumDefByName({})", name);
-        }
-
-        AtlasEnumDef enumDef = enumDefs.getTypeDefByName(name);
-
-        if (enumDef != null) {
-            enumDefs.removeTypeDefByName(name);
-        }
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.removeEnumDefByName({})", name);
-        }
+        return registryData.enumDefs.getTypeDefByName(name);
     }
 
 
-    public void addStructDefWithNoRefResolve(AtlasStructDef structDef) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.addStructDefWithNoRefResolve({})", structDef);
-        }
-
-        structDefs.addType(structDef, new AtlasStructType(structDef));
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.addStructDefWithNoRefResolve({})", structDef);
-        }
-    }
-
-    public void addStructDef(AtlasStructDef structDef) throws AtlasBaseException {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.addStructDef({})", structDef);
-        }
-
-        structDefs.addType(structDef, new AtlasStructType(structDef, this));
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.addStructDef({})", structDef);
-        }
-    }
-
-    public Collection<AtlasStructDef> getAllStructDefs() { return structDefs.getAll(); }
+    public Collection<AtlasStructDef> getAllStructDefs() { return registryData.structDefs.getAll(); }
 
     public AtlasStructDef getStructDefByGuid(String guid) {
-        return structDefs.getTypeDefByGuid(guid);
+        return registryData.structDefs.getTypeDefByGuid(guid);
     }
 
-    public AtlasStructDef getStructDefByName(String name) { return structDefs.getTypeDefByName(name); }
+    public AtlasStructDef getStructDefByName(String name) { return registryData.structDefs.getTypeDefByName(name); }
 
-    public void removeStructDefByGuid(String guid) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.removeStructDefByGuid({})", guid);
-        }
 
-        AtlasStructDef structDef = structDefs.getTypeDefByGuid(guid);
-
-        if (structDef != null) {
-            structDefs.removeTypeDefByGuid(guid);
-        }
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.removeStructDefByGuid({})", guid);
-        }
+    public Collection<AtlasClassificationDef> getAllClassificationDefs() {
+        return registryData.classificationDefs.getAll();
     }
-
-    public void removeStructDefByName(String name) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.removeStructDefByName({})", name);
-        }
-
-        AtlasStructDef structDef = structDefs.getTypeDefByName(name);
-
-        if (structDef != null) {
-            structDefs.removeTypeDefByName(name);
-        }
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.removeStructDefByName({})", name);
-        }
-    }
-
-
-    public void addClassificationDefWithNoRefResolve(AtlasClassificationDef classificationDef) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.addClassificationDefWithNoRefResolve({})", classificationDef);
-        }
-
-        classificationDefs.addType(classificationDef, new AtlasClassificationType(classificationDef));
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.addClassificationDefWithNoRefResolve({})", classificationDef);
-        }
-    }
-
-    public void addClassificationDef(AtlasClassificationDef classificationDef)
-        throws AtlasBaseException {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.addClassificationDef({})", classificationDef);
-        }
-
-        classificationDefs.addType(classificationDef, new AtlasClassificationType(classificationDef, this));
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.addClassificationDef({})", classificationDef);
-        }
-    }
-
-    public Collection<AtlasClassificationDef> getAllClassificationDefs() { return classificationDefs.getAll(); }
 
     public AtlasClassificationDef getClassificationDefByGuid(String guid) {
-        return classificationDefs.getTypeDefByGuid(guid);
+        return registryData.classificationDefs.getTypeDefByGuid(guid);
     }
 
     public AtlasClassificationDef getClassificationDefByName(String name) {
-        return classificationDefs.getTypeDefByName(name);
-    }
-
-    public void removeClassificationDefByGuid(String guid) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.removeClassificationDefByGuid({})", guid);
-        }
-
-        AtlasClassificationDef classificationDef = classificationDefs.getTypeDefByGuid(guid);
-
-        if (classificationDef != null) {
-            classificationDefs.removeTypeDefByGuid(guid);
-        }
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.removeClassificationDefByGuid({})", guid);
-        }
-    }
-
-    public void removeClassificationDefByName(String name) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.removeClassificationDefByName({})", name);
-        }
-
-        AtlasClassificationDef classificationDef = classificationDefs.getTypeDefByName(name);
-
-        if (classificationDef != null) {
-            classificationDefs.removeTypeDefByName(name);
-        }
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.removeClassificationDefByName({})", name);
-        }
+        return registryData.classificationDefs.getTypeDefByName(name);
     }
 
 
-    public void addEntityDefWithNoRefResolve(AtlasEntityDef entityDef) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.addEntityDefWithNoRefResolve({})", entityDef);
-        }
-
-        entityDefs.addType(entityDef, new AtlasEntityType(entityDef));
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.addEntityDefWithNoRefResolve({})", entityDef);
-        }
-    }
-
-    public void addEntityDef(AtlasEntityDef entityDef) throws AtlasBaseException {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.addEntityDef({})", entityDef);
-        }
-
-        entityDefs.addType(entityDef, new AtlasEntityType(entityDef, this));
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.addEntityDef({})", entityDef);
-        }
-    }
-
-    public Collection<AtlasEntityDef> getAllEntityDefs() { return entityDefs.getAll(); }
+    public Collection<AtlasEntityDef> getAllEntityDefs() { return registryData.entityDefs.getAll(); }
 
     public AtlasEntityDef getEntityDefByGuid(String guid) {
-        return entityDefs.getTypeDefByGuid(guid);
+        return registryData.entityDefs.getTypeDefByGuid(guid);
     }
 
     public AtlasEntityDef getEntityDefByName(String name) {
-        return entityDefs.getTypeDefByName(name);
+        return registryData.entityDefs.getTypeDefByName(name);
     }
 
-    public void removeEntityDefByGuid(String guid) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.removeEntityDefByGuid({})", guid);
+    public AtlasTransientTypeRegistry createTransientTypeRegistry() {
+        return new AtlasTransientTypeRegistry(this);
+    }
+
+    public void commitTransientTypeRegistry(AtlasTransientTypeRegistry transientTypeRegistry) {
+        this.registryData = transientTypeRegistry.registryData;
+    }
+
+    static class RegistryData {
+        final TypeCache                            allTypes;
+        final TypeDefCache<AtlasEnumDef>           enumDefs;
+        final TypeDefCache<AtlasStructDef>         structDefs;
+        final TypeDefCache<AtlasClassificationDef> classificationDefs;
+        final TypeDefCache<AtlasEntityDef>         entityDefs;
+
+        RegistryData() {
+            allTypes           = new TypeCache();
+            enumDefs           = new TypeDefCache<>(allTypes);
+            structDefs         = new TypeDefCache<>(allTypes);
+            classificationDefs = new TypeDefCache<>(allTypes);
+            entityDefs         = new TypeDefCache<>(allTypes);
+
+            allTypes.addType(new AtlasBuiltInTypes.AtlasBooleanType());
+            allTypes.addType(new AtlasBuiltInTypes.AtlasByteType());
+            allTypes.addType(new AtlasBuiltInTypes.AtlasShortType());
+            allTypes.addType(new AtlasBuiltInTypes.AtlasIntType());
+            allTypes.addType(new AtlasBuiltInTypes.AtlasLongType());
+            allTypes.addType(new AtlasBuiltInTypes.AtlasFloatType());
+            allTypes.addType(new AtlasBuiltInTypes.AtlasDoubleType());
+            allTypes.addType(new AtlasBuiltInTypes.AtlasBigIntegerType());
+            allTypes.addType(new AtlasBuiltInTypes.AtlasBigDecimalType());
+            allTypes.addType(new AtlasBuiltInTypes.AtlasDateType());
+            allTypes.addType(new AtlasBuiltInTypes.AtlasStringType());
+            allTypes.addType(new AtlasBuiltInTypes.AtlasObjectIdType());
         }
 
-        AtlasEntityDef entityDef = entityDefs.getTypeDefByGuid(guid);
-
-        if (entityDef != null) {
-            entityDefs.removeTypeDefByGuid(guid);
+        RegistryData(RegistryData other) {
+            allTypes           = new TypeCache(other.allTypes);
+            enumDefs           = new TypeDefCache<>(other.enumDefs, allTypes);
+            structDefs         = new TypeDefCache<>(other.structDefs, allTypes);
+            classificationDefs = new TypeDefCache<>(other.classificationDefs, allTypes);
+            entityDefs         = new TypeDefCache<>(other.entityDefs, allTypes);
         }
 
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.removeEntityDefByGuid({})", guid);
+        void updateGuid(String typeName, String guid) {
+            if (typeName != null) {
+                enumDefs.updateGuid(typeName, guid);
+                structDefs.updateGuid(typeName, guid);
+                classificationDefs.updateGuid(typeName, guid);
+                entityDefs.updateGuid(typeName, guid);
+            }
+        }
+
+        void removeByGuid(String guid) {
+            if (guid != null) {
+                enumDefs.removeTypeDefByGuid(guid);
+                structDefs.removeTypeDefByGuid(guid);
+                classificationDefs.removeTypeDefByGuid(guid);
+                entityDefs.removeTypeDefByGuid(guid);
+            }
+        }
+
+        void removeByName(String typeName) {
+            if (typeName != null) {
+                enumDefs.removeTypeDefByName(typeName);
+                structDefs.removeTypeDefByName(typeName);
+                classificationDefs.removeTypeDefByName(typeName);
+                entityDefs.removeTypeDefByName(typeName);
+            }
         }
     }
 
-    public void removeEntityDefByName(String name) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("==> AtlasTypeRegistry.removeEntityDefByName({})", name);
+    public static class AtlasTransientTypeRegistry extends AtlasTypeRegistry {
+
+        private AtlasTransientTypeRegistry(AtlasTypeRegistry parent) {
+            super(parent);
         }
 
-        AtlasEntityDef entityDef = entityDefs.getTypeDefByName(name);
-
-        if (entityDef != null) {
-            entityDefs.removeTypeDefByName(name);
+        private void resolveReferences() throws AtlasBaseException {
+            for (AtlasType type : registryData.allTypes.getAllTypes()) {
+                type.resolveReferences(this);
+            }
         }
 
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("<== AtlasTypeRegistry.removeEntityDefByName({})", name);
+        public void addType(AtlasBaseTypeDef typeDef) throws AtlasBaseException {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.addType({})", typeDef);
+            }
+
+            if (typeDef != null) {
+                addTypeWithNoRefResolve(typeDef);
+
+                resolveReferences();
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.addType({})", typeDef);
+            }
+        }
+
+        public void updateGuid(String typeName, String guid) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.updateGuid({}, {})", typeName, guid);
+            }
+
+            registryData.updateGuid(typeName, guid);
+
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.updateGuid({}, {})", typeName, guid);
+            }
+        }
+
+        public void addTypes(Collection<? extends AtlasBaseTypeDef> typeDefs) throws AtlasBaseException {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.addTypes(length={})", (typeDefs == null ? 0 : typeDefs.size()));
+            }
+
+            if (CollectionUtils.isNotEmpty(typeDefs)) {
+                addTypesWithNoRefResolve(typeDefs);
+
+                resolveReferences();
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.addTypes(length={})", (typeDefs == null ? 0 : typeDefs.size()));
+            }
+        }
+
+        public void addTypes(AtlasTypesDef typesDef) throws AtlasBaseException {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.addTypes({})", typesDef);
+            }
+
+            if (typesDef != null) {
+                addTypesWithNoRefResolve(typesDef.getEnumDefs());
+                addTypesWithNoRefResolve(typesDef.getStructDefs());
+                addTypesWithNoRefResolve(typesDef.getClassificationDefs());
+                addTypesWithNoRefResolve(typesDef.getEntityDefs());
+
+                resolveReferences();
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.addTypes({})", typesDef);
+            }
+        }
+
+        public void updateType(AtlasBaseTypeDef typeDef) throws AtlasBaseException {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.updateType({})", typeDef);
+            }
+
+            if (typeDef != null) {
+                updateTypeWithNoRefResolve(typeDef);
+
+                resolveReferences();
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.updateType({})", typeDef);
+            }
+        }
+
+        public void updateTypeByGuid(String guid, AtlasBaseTypeDef typeDef) throws AtlasBaseException {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.updateTypeByGuid({})", guid);
+            }
+
+            if (guid != null && typeDef != null) {
+                updateTypeByGuidWithNoRefResolve(guid, typeDef);
+
+                resolveReferences();
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.updateTypeByGuid({})", guid);
+            }
+        }
+
+        public void updateTypeByName(String name, AtlasBaseTypeDef typeDef) throws AtlasBaseException {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.updateEnumDefByName({})", name);
+            }
+
+            if (name != null && typeDef != null) {
+                updateTypeByNameWithNoRefResolve(name, typeDef);
+
+                resolveReferences();
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.updateEnumDefByName({})", name);
+            }
+        }
+
+        public void updateTypes(Collection<? extends AtlasBaseTypeDef> typeDefs) throws AtlasBaseException {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.updateTypes(length={})", (typeDefs == null ? 0 : typeDefs.size()));
+            }
+
+            if (CollectionUtils.isNotEmpty(typeDefs)) {
+                updateTypesWithNoRefResolve(typeDefs);
+
+                resolveReferences();
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.updateTypes(length={})", (typeDefs == null ? 0 : typeDefs.size()));
+            }
+        }
+
+        public void updateTypes(AtlasTypesDef typesDef) throws AtlasBaseException {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.updateTypes({})", typesDef);
+            }
+
+            if (typesDef != null) {
+                updateTypesWithNoRefResolve(typesDef.getEnumDefs());
+                updateTypesWithNoRefResolve(typesDef.getStructDefs());
+                updateTypesWithNoRefResolve(typesDef.getClassificationDefs());
+                updateTypesWithNoRefResolve(typesDef.getEntityDefs());
+
+                resolveReferences();
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.updateTypes({})", typesDef);
+            }
+        }
+
+        public void removeTypeByGuid(String guid) throws AtlasBaseException {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.removeTypeByGuid({})", guid);
+            }
+
+            if (guid != null) {
+                registryData.removeByGuid(guid);
+
+                resolveReferences();
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.removeTypeByGuid({})", guid);
+            }
+        }
+
+        public void removeTypeByName(String name) throws AtlasBaseException {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.removeTypeByName({})", name);
+            }
+
+            if (name != null) {
+                registryData.removeByName(name);
+
+                resolveReferences();
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.removeEnumDefByName({})", name);
+            }
+        }
+
+
+        private void addTypeWithNoRefResolve(AtlasBaseTypeDef typeDef) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.addTypeWithNoRefResolve({})", typeDef);
+            }
+
+            if (typeDef != null) {
+                if (typeDef.getClass().equals(AtlasEnumDef.class)) {
+                    AtlasEnumDef enumDef = (AtlasEnumDef) typeDef;
+
+                    registryData.enumDefs.addType(enumDef, new AtlasEnumType(enumDef));
+                } else if (typeDef.getClass().equals(AtlasStructDef.class)) {
+                    AtlasStructDef structDef = (AtlasStructDef) typeDef;
+
+                    registryData.structDefs.addType(structDef, new AtlasStructType(structDef));
+                } else if (typeDef.getClass().equals(AtlasClassificationDef.class)) {
+                    AtlasClassificationDef classificationDef = (AtlasClassificationDef) typeDef;
+
+                    registryData.classificationDefs.addType(classificationDef,
+                                                            new AtlasClassificationType(classificationDef));
+                } else if (typeDef.getClass().equals(AtlasEntityDef.class)) {
+                    AtlasEntityDef entityDef = (AtlasEntityDef) typeDef;
+
+                    registryData.entityDefs.addType(entityDef, new AtlasEntityType(entityDef));
+                }
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.addTypeWithNoRefResolve({})", typeDef);
+            }
+        }
+
+        private void addTypesWithNoRefResolve(Collection<? extends AtlasBaseTypeDef> typeDefs) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.addTypesWithNoRefResolve(length={})",
+                          (typeDefs == null ? 0 : typeDefs.size()));
+            }
+
+            if (CollectionUtils.isNotEmpty(typeDefs)) {
+                for (AtlasBaseTypeDef typeDef : typeDefs) {
+                    addTypeWithNoRefResolve(typeDef);
+                }
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.addTypesWithNoRefResolve(length={})",
+                          (typeDefs == null ? 0 : typeDefs.size()));
+            }
+        }
+
+        private void updateTypeWithNoRefResolve(AtlasBaseTypeDef typeDef) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.updateType({})", typeDef);
+            }
+
+            if (typeDef == null) {
+                // ignore
+            } else if (StringUtils.isNotBlank(typeDef.getGuid())) {
+                updateTypeByGuidWithNoRefResolve(typeDef.getGuid(), typeDef);
+            } else if (StringUtils.isNotBlank(typeDef.getName())) {
+                updateTypeByNameWithNoRefResolve(typeDef.getName(), typeDef);
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.updateType({})", typeDef);
+            }
+        }
+
+        private void updateTypeByGuidWithNoRefResolve(String guid, AtlasBaseTypeDef typeDef) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.updateTypeByGuidWithNoRefResolve({})", guid);
+            }
+
+            if (guid == null || typeDef == null) {
+                // ignore
+            } else if (typeDef.getClass().equals(AtlasEnumDef.class)) {
+                AtlasEnumDef enumDef = (AtlasEnumDef)typeDef;
+
+                registryData.enumDefs.removeTypeDefByGuid(guid);
+                registryData.enumDefs.addType(enumDef, new AtlasEnumType(enumDef));
+            } else if (typeDef.getClass().equals(AtlasStructDef.class)) {
+                AtlasStructDef structDef = (AtlasStructDef)typeDef;
+
+                registryData.structDefs.removeTypeDefByGuid(guid);
+                registryData.structDefs.addType(structDef, new AtlasStructType(structDef));
+            } else if (typeDef.getClass().equals(AtlasClassificationDef.class)) {
+                AtlasClassificationDef classificationDef = (AtlasClassificationDef)typeDef;
+
+                registryData.classificationDefs.removeTypeDefByGuid(guid);
+                registryData.classificationDefs.addType(classificationDef,
+                                                        new AtlasClassificationType(classificationDef));
+            } else if (typeDef.getClass().equals(AtlasEntityDef.class)) {
+                AtlasEntityDef entityDef = (AtlasEntityDef)typeDef;
+
+                registryData.entityDefs.removeTypeDefByGuid(guid);
+                registryData.entityDefs.addType(entityDef, new AtlasEntityType(entityDef));
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.updateTypeByGuidWithNoRefResolve({})", guid);
+            }
+        }
+
+        private void updateTypeByNameWithNoRefResolve(String name, AtlasBaseTypeDef typeDef) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.updateTypeByNameWithNoRefResolve({})", name);
+            }
+
+            if (name == null || typeDef == null) {
+                // ignore
+            } else if (typeDef.getClass().equals(AtlasEnumDef.class)) {
+                AtlasEnumDef enumDef = (AtlasEnumDef)typeDef;
+
+                registryData.enumDefs.removeTypeDefByName(name);
+                registryData.enumDefs.addType(enumDef, new AtlasEnumType(enumDef));
+            } else if (typeDef.getClass().equals(AtlasStructDef.class)) {
+                AtlasStructDef structDef = (AtlasStructDef)typeDef;
+
+                registryData.structDefs.removeTypeDefByName(name);
+                registryData.structDefs.addType(structDef, new AtlasStructType(structDef));
+            } else if (typeDef.getClass().equals(AtlasClassificationDef.class)) {
+                AtlasClassificationDef classificationDef = (AtlasClassificationDef)typeDef;
+
+                registryData.classificationDefs.removeTypeDefByName(name);
+                registryData.classificationDefs.addType(classificationDef,
+                                                        new AtlasClassificationType(classificationDef));
+            } else if (typeDef.getClass().equals(AtlasEntityDef.class)) {
+                AtlasEntityDef entityDef = (AtlasEntityDef)typeDef;
+
+                registryData.entityDefs.removeTypeDefByName(name);
+                registryData.entityDefs.addType(entityDef, new AtlasEntityType(entityDef));
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.updateTypeByNameWithNoRefResolve({})", name);
+            }
+        }
+
+        private void updateTypesWithNoRefResolve(Collection<? extends AtlasBaseTypeDef> typeDefs) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("==> AtlasTypeRegistry.updateTypesWithNoRefResolve(length={})",
+                                                                             (typeDefs == null ? 0 : typeDefs.size()));
+            }
+
+            if (CollectionUtils.isNotEmpty(typeDefs)) {
+                for (AtlasBaseTypeDef typeDef : typeDefs) {
+                    updateTypeWithNoRefResolve(typeDef);
+                }
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("<== AtlasTypeRegistry.updateTypesWithNoRefResolve(length={})",
+                                                                              (typeDefs == null ? 0 : typeDefs.size()));
+            }
+        }
+    }
+}
+
+class TypeCache {
+    private final Map<String, AtlasType> typeGuidMap;
+    private final Map<String, AtlasType> typeNameMap;
+
+    public TypeCache() {
+        typeGuidMap = new ConcurrentHashMap<>();
+        typeNameMap = new ConcurrentHashMap<>();
+    }
+
+    public TypeCache(TypeCache other) {
+        typeGuidMap = new ConcurrentHashMap<>(other.typeGuidMap);
+        typeNameMap = new ConcurrentHashMap<>(other.typeNameMap);
+    }
+
+    public void addType(AtlasType type) {
+        if (type != null) {
+            if (StringUtils.isNotEmpty(type.getTypeName())) {
+                typeNameMap.put(type.getTypeName(), type);
+            }
         }
     }
 
-    private void registerType(AtlasType dataType) {
-        allTypes.put(dataType.getTypeName(), dataType);
+    public void addType(AtlasBaseTypeDef typeDef, AtlasType type) {
+        if (typeDef != null && type != null) {
+            if (StringUtils.isNotEmpty(typeDef.getGuid())) {
+                typeGuidMap.put(typeDef.getGuid(), type);
+            }
+
+            if (StringUtils.isNotEmpty(typeDef.getName())) {
+                typeNameMap.put(typeDef.getName(), type);
+            }
+        }
     }
 
-    private void unregisterType(AtlasType dataType) {
-        allTypes.remove(dataType.getTypeName());
+    public Collection<String> getAllTypeNames() {
+        return Collections.unmodifiableCollection(typeNameMap.keySet());
     }
 
-    private void unregisterTypeByName(String typeName) {
-        allTypes.remove(typeName);
+    public Collection<AtlasType> getAllTypes() {
+        return Collections.unmodifiableCollection(typeNameMap.values());
     }
 
-    class TypeDefCache<T extends AtlasBaseTypeDef> {
-        private final AtlasTypeRegistry typeRegistry;
-        private final Map<String, T>    typeDefGuidMap = new ConcurrentHashMap<String, T>();
-        private final Map<String, T>    typeDefNameMap = new ConcurrentHashMap<String, T>();
+    public AtlasType getTypeByGuid(String guid) {
+        AtlasType ret = guid != null ? typeGuidMap.get(guid) : null;
 
-        public TypeDefCache(AtlasTypeRegistry typeRegistry) {
-            this.typeRegistry = typeRegistry;
+        return ret;
+    }
+
+    public AtlasType getTypeByName(String name) {
+        AtlasType ret = name != null ? typeNameMap.get(name) : null;
+
+        return ret;
+    }
+
+    public void updateGuid(String typeName, String currGuid, String newGuid) {
+        if (currGuid != null) {
+            typeGuidMap.remove(currGuid);
         }
 
-        public void addType(T typeDef, AtlasType type) {
+        if (typeName != null && newGuid != null) {
+            AtlasType type = typeNameMap.get(typeName);
+
             if (type != null) {
-                if (StringUtils.isNotEmpty(typeDef.getGuid())) {
-                    typeDefGuidMap.put(typeDef.getGuid(), typeDef);
-                }
-
-                if (StringUtils.isNotEmpty(typeDef.getName())) {
-                    typeDefNameMap.put(typeDef.getName(), typeDef);
-                }
-
-                typeRegistry.registerType(type);
+                typeGuidMap.put(newGuid, type);
             }
         }
+    }
 
-        public Collection<T> getAll() {
-            return Collections.unmodifiableCollection(typeDefNameMap.values());
+    public void removeTypeByGuid(String guid) {
+        if (guid != null) {
+            typeGuidMap.remove(guid);
         }
+    }
 
-        public T getTypeDefByGuid(String guid) {
-            T ret = guid != null ? typeDefGuidMap.get(guid) : null;
-
-            return ret;
+    public void removeTypeByName(String name) {
+        if (name != null) {
+            typeNameMap.get(name);
         }
+    }
+}
 
-        public T getTypeDefByName(String name) {
-            T ret = name != null ? typeDefNameMap.get(name) : null;
+class TypeDefCache<T extends AtlasBaseTypeDef> {
+    private final TypeCache      typeCache;
+    private final Map<String, T> typeDefGuidMap;
+    private final Map<String, T> typeDefNameMap;
 
-            return ret;
+    public TypeDefCache(TypeCache typeCache) {
+        this.typeCache      = typeCache;
+        this.typeDefGuidMap = new ConcurrentHashMap<>();
+        this.typeDefNameMap = new ConcurrentHashMap<>();
+    }
+
+    public TypeDefCache(TypeDefCache other, TypeCache typeCache) {
+        this.typeCache      = typeCache;
+        this.typeDefGuidMap = new ConcurrentHashMap<>(other.typeDefGuidMap);
+        this.typeDefNameMap = new ConcurrentHashMap<>(other.typeDefNameMap);
+    }
+
+    public void addType(T typeDef, AtlasType type) {
+        if (typeDef != null && type != null) {
+            if (StringUtils.isNotEmpty(typeDef.getGuid())) {
+                typeDefGuidMap.put(typeDef.getGuid(), typeDef);
+            }
+
+            if (StringUtils.isNotEmpty(typeDef.getName())) {
+                typeDefNameMap.put(typeDef.getName(), typeDef);
+            }
+
+            typeCache.addType(typeDef, type);
         }
+    }
 
-        public void removeTypeDefByGuid(String guid) {
-            T typeDef = guid != null ? typeDefGuidMap.remove(guid) : null;
+    public Collection<T> getAll() {
+        return Collections.unmodifiableCollection(typeDefNameMap.values());
+    }
+
+    public T getTypeDefByGuid(String guid) {
+        T ret = guid != null ? typeDefGuidMap.get(guid) : null;
+
+        return ret;
+    }
+
+    public T getTypeDefByName(String name) {
+        T ret = name != null ? typeDefNameMap.get(name) : null;
+
+        return ret;
+    }
+
+    public void updateGuid(String typeName, String newGuid) {
+        if (typeName != null) {
+            T typeDef = typeDefNameMap.get(typeName);
 
             if (typeDef != null) {
-                if (StringUtils.isNotEmpty(typeDef.getName())) {
-                    typeDefNameMap.remove(typeDef.getName());
-                    typeRegistry.unregisterTypeByName(typeDef.getName());
+                String currGuid = typeDef.getGuid();
+
+                if (!StringUtils.equals(currGuid, newGuid)) {
+                    if (currGuid != null) {
+                        typeDefGuidMap.remove(currGuid);
+                    }
+
+                    typeDef.setGuid(newGuid);
+
+                    if (newGuid != null) {
+                        typeDefGuidMap.put(newGuid, typeDef);
+                    }
+
+                    typeCache.updateGuid(typeName, currGuid, newGuid);
                 }
             }
         }
+    }
 
-        public void removeTypeDefByName(String name) {
-            T typeDef = name != null ? typeDefNameMap.get(name) : null;
+    public void removeTypeDefByGuid(String guid) {
+        if (guid != null) {
+            T typeDef = typeDefGuidMap.remove(guid);
 
-            if (typeDef != null) {
-                if (StringUtils.isNotEmpty(typeDef.getGuid())) {
-                    typeDefGuidMap.remove(typeDef.getGuid());
-                    typeRegistry.unregisterTypeByName(typeDef.getName());
-                }
+            typeCache.removeTypeByGuid(guid);
+
+            String name = typeDef != null ? typeDef.getName() : null;
+
+            if (name != null) {
+                typeDefNameMap.remove(name);
+                typeCache.removeTypeByName(name);
+            }
+
+        }
+    }
+
+    public void removeTypeDefByName(String name) {
+        if (name != null) {
+            T typeDef = typeDefNameMap.remove(name);
+
+            typeCache.removeTypeByName(name);
+
+            String guid = typeDef != null ? typeDef.getGuid() : null;
+
+            if (guid != null) {
+                typeDefGuidMap.remove(guid);
+                typeCache.removeTypeByGuid(guid);
             }
         }
     }

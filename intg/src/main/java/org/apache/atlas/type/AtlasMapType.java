@@ -39,14 +39,14 @@ public class AtlasMapType extends AtlasType {
     private AtlasType valueType;
 
     public AtlasMapType(String keyTypeName, String valueTypeName) {
-        super(AtlasBaseTypeDef.getMapTypeName(keyTypeName, valueTypeName));
+        super(AtlasBaseTypeDef.getMapTypeName(keyTypeName, valueTypeName), TypeCategory.MAP);
 
         this.keyTypeName   = keyTypeName;
         this.valueTypeName = valueTypeName;
     }
 
     public AtlasMapType(AtlasType keyType, AtlasType valueType) {
-        super(AtlasBaseTypeDef.getMapTypeName(keyType.getTypeName(), valueType.getTypeName()));
+        super(AtlasBaseTypeDef.getMapTypeName(keyType.getTypeName(), valueType.getTypeName()), TypeCategory.MAP);
 
         this.keyTypeName   = keyType.getTypeName();
         this.valueTypeName = valueType.getTypeName();
@@ -56,7 +56,7 @@ public class AtlasMapType extends AtlasType {
 
     public AtlasMapType(String keyTypeName, String valueTypeName, AtlasTypeRegistry typeRegistry)
         throws AtlasBaseException {
-        super(AtlasBaseTypeDef.getMapTypeName(keyTypeName, valueTypeName));
+        super(AtlasBaseTypeDef.getMapTypeName(keyTypeName, valueTypeName), TypeCategory.MAP);
 
         this.keyTypeName   = keyTypeName;
         this.valueTypeName = valueTypeName;
@@ -64,29 +64,30 @@ public class AtlasMapType extends AtlasType {
         resolveReferences(typeRegistry);
     }
 
+    public String getKeyTypeName() {
+        return keyTypeName;
+    }
+
+    public String getValueTypeName() {
+        return valueTypeName;
+    }
+
+    public AtlasType getKeyType() {
+        return keyType;
+    }
+
+    public AtlasType getValueType() {
+        return valueType;
+    }
+
+    public void setKeyType(AtlasType keyType) {
+        this.keyType = keyType;
+    }
+
     @Override
     public void resolveReferences(AtlasTypeRegistry typeRegistry) throws AtlasBaseException {
         this.keyType   = typeRegistry.getType(keyTypeName);
         this.valueType = typeRegistry.getType(valueTypeName);
-
-        if (keyType == null) {
-            String msg = keyTypeName + ": unknown key-type for map";
-
-            LOG.error(msg);
-
-            throw new AtlasBaseException(msg);
-        }
-
-        if (valueType == null) {
-            String msg = valueTypeName + ": unknown value-type for map";
-
-            LOG.error(msg);
-
-            throw new AtlasBaseException(msg);
-        }
-
-        keyType.resolveReferences(typeRegistry);
-        valueType.resolveReferences(typeRegistry);
     }
 
     @Override

@@ -41,6 +41,7 @@ import org.apache.atlas.type.AtlasClassificationType;
 import org.apache.atlas.type.AtlasEntityType;
 import org.apache.atlas.type.AtlasStructType;
 import org.apache.atlas.type.AtlasTypeRegistry;
+import org.apache.atlas.type.AtlasTypeRegistry.AtlasTransientTypeRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -157,7 +158,17 @@ public final class  ModelTestUtil {
             ret.setDefaultValue(ret.getElementDefs().get(idxDefault).getValue());
         }
 
-        typesRegistry.addEnumDef(ret);
+        try {
+            AtlasTransientTypeRegistry ttr = typesRegistry.createTransientTypeRegistry();
+
+            ttr.addType(ret);
+
+            typesRegistry.commitTransientTypeRegistry(ttr);
+        } catch (AtlasBaseException excp) {
+            LOG.error("failed to create enum-def", excp);
+
+            ret = null;
+        }
 
         return ret;
     }
@@ -176,7 +187,11 @@ public final class  ModelTestUtil {
         ret.setAttributeDefs(newAttributeDefsWithAllBuiltInTypes(PREFIX_ATTRIBUTE_NAME));
 
         try {
-            typesRegistry.addStructDef(ret);
+            AtlasTransientTypeRegistry ttr = typesRegistry.createTransientTypeRegistry();
+
+            ttr.addType(ret);
+
+            typesRegistry.commitTransientTypeRegistry(ttr);
         } catch (AtlasBaseException excp) {
             LOG.error("failed to create struct-def", excp);
 
@@ -214,7 +229,11 @@ public final class  ModelTestUtil {
         }
 
         try {
-            typesRegistry.addEntityDef(ret);
+            AtlasTransientTypeRegistry ttr = typesRegistry.createTransientTypeRegistry();
+
+            ttr.addType(ret);
+
+            typesRegistry.commitTransientTypeRegistry(ttr);
         } catch (AtlasBaseException excp) {
             LOG.error("failed to create entity-def", excp);
 
@@ -261,7 +280,11 @@ public final class  ModelTestUtil {
         }
 
         try {
-            typesRegistry.addClassificationDef(ret);
+            AtlasTransientTypeRegistry ttr = typesRegistry.createTransientTypeRegistry();
+
+            ttr.addType(ret);
+
+            typesRegistry.commitTransientTypeRegistry(ttr);
         } catch (AtlasBaseException excp) {
             LOG.error("failed to create classification-def", excp);
 
@@ -279,10 +302,14 @@ public final class  ModelTestUtil {
     public static AtlasEntity newEntity(AtlasEntityDef entityDef, AtlasTypeRegistry typesRegistry) {
         AtlasEntity ret = null;
 
-        AtlasType dataType = typesRegistry.getType(entityDef.getName());
+        try {
+            AtlasType dataType = typesRegistry.getType(entityDef.getName());
 
-        if (dataType != null && dataType instanceof AtlasEntityType) {
-            ret = ((AtlasEntityType)dataType).createDefaultValue();
+            if (dataType instanceof AtlasEntityType) {
+                ret = ((AtlasEntityType) dataType).createDefaultValue();
+            }
+        } catch (AtlasBaseException excp) {
+            LOG.error("failed to get entity-type " + entityDef.getName(), excp);
         }
 
         return ret;
@@ -295,10 +322,14 @@ public final class  ModelTestUtil {
     public static AtlasStruct newStruct(AtlasStructDef structDef, AtlasTypeRegistry typesRegistry) {
         AtlasStruct ret = null;
 
-        AtlasType dataType = typesRegistry.getType(structDef.getName());
+        try {
+            AtlasType dataType = typesRegistry.getType(structDef.getName());
 
-        if (dataType != null && dataType instanceof AtlasStructType) {
-            ret = ((AtlasStructType)dataType).createDefaultValue();
+            if (dataType instanceof AtlasStructType) {
+                ret = ((AtlasStructType)dataType).createDefaultValue();
+            }
+        } catch (AtlasBaseException excp) {
+            LOG.error("failed to get struct-type " + structDef.getName(), excp);
         }
 
         return ret;
@@ -312,10 +343,14 @@ public final class  ModelTestUtil {
                                                         AtlasTypeRegistry typesRegistry) {
         AtlasClassification ret = null;
 
-        AtlasType dataType = typesRegistry.getType(classificationDef.getName());
+        try {
+            AtlasType dataType = typesRegistry.getType(classificationDef.getName());
 
-        if (dataType != null && dataType instanceof AtlasClassificationType) {
-            ret = ((AtlasClassificationType)dataType).createDefaultValue();
+            if (dataType instanceof AtlasClassificationType) {
+                ret = ((AtlasClassificationType)dataType).createDefaultValue();
+            }
+        } catch (AtlasBaseException excp) {
+            LOG.error("failed to get classification-type " + classificationDef.getName(), excp);
         }
 
         return ret;

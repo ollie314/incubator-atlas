@@ -48,7 +48,7 @@ public class AtlasArrayType extends AtlasType {
     }
 
     public AtlasArrayType(AtlasType elementType, int minCount, int maxCount) {
-        super(AtlasBaseTypeDef.getArrayTypeName(elementType.getTypeName()));
+        super(AtlasBaseTypeDef.getArrayTypeName(elementType.getTypeName()), TypeCategory.ARRAY);
 
         this.elementTypeName = elementType.getTypeName();
         this.minCount        = minCount;
@@ -61,7 +61,7 @@ public class AtlasArrayType extends AtlasType {
     }
 
     public AtlasArrayType(String elementTypeName, int minCount, int maxCount) {
-        super(AtlasBaseTypeDef.getArrayTypeName(elementTypeName));
+        super(AtlasBaseTypeDef.getArrayTypeName(elementTypeName), TypeCategory.ARRAY);
 
         this.elementTypeName = elementTypeName;
         this.minCount        = minCount;
@@ -75,7 +75,7 @@ public class AtlasArrayType extends AtlasType {
 
     public AtlasArrayType(String elementTypeName, int minCount, int maxCount, AtlasTypeRegistry typeRegistry)
         throws  AtlasBaseException {
-        super(AtlasBaseTypeDef.getArrayTypeName(elementTypeName));
+        super(AtlasBaseTypeDef.getArrayTypeName(elementTypeName), TypeCategory.ARRAY);
 
         this.elementTypeName = elementTypeName;
         this.minCount        = minCount;
@@ -84,19 +84,25 @@ public class AtlasArrayType extends AtlasType {
         this.resolveReferences(typeRegistry);
     }
 
+    public String getElementTypeName() {
+        return elementTypeName;
+    }
+
+    public int getMinCount() {
+        return minCount;
+    }
+
+    public int getMaxCount() {
+        return maxCount;
+    }
+
+    public AtlasType getElementType() {
+        return elementType;
+    }
+
     @Override
     public void resolveReferences(AtlasTypeRegistry typeRegistry) throws AtlasBaseException {
         elementType = typeRegistry.getType(elementTypeName);
-
-        if (elementType == null) {
-            String msg = elementTypeName + ": unknown element-type for array";
-
-            LOG.error(msg);
-
-            throw new AtlasBaseException(msg);
-        }
-
-        elementType.resolveReferences(typeRegistry);
     }
 
     @Override
