@@ -18,11 +18,11 @@
 package org.apache.atlas.repository.store.graph.v1;
 
 import com.google.common.base.Preconditions;
-
 import com.google.inject.Inject;
-import org.apache.atlas.AtlasConstants;
+
 import org.apache.atlas.AtlasErrorCode;
 import org.apache.atlas.exception.AtlasBaseException;
+import org.apache.atlas.listener.TypeDefChangeListener;
 import org.apache.atlas.model.typedef.AtlasBaseTypeDef;
 import org.apache.atlas.model.typedef.AtlasClassificationDef;
 import org.apache.atlas.model.typedef.AtlasEntityDef;
@@ -66,8 +66,9 @@ public class AtlasTypeDefGraphStoreV1 extends AtlasTypeDefGraphStore {
     protected final AtlasGraph atlasGraph = AtlasGraphProvider.getGraphInstance();
 
     @Inject
-    public AtlasTypeDefGraphStoreV1(AtlasTypeRegistry typeRegistry) {
-        super(typeRegistry);
+    public AtlasTypeDefGraphStoreV1(AtlasTypeRegistry typeRegistry,
+                                    Set<TypeDefChangeListener> typeDefChangeListeners) {
+        super(typeRegistry, typeDefChangeListeners);
 
         LOG.info("==> AtlasTypeDefGraphStoreV1()");
 
@@ -341,7 +342,7 @@ public class AtlasTypeDefGraphStoreV1 extends AtlasTypeDefGraphStore {
 
         if (CollectionUtils.isNotEmpty(superTypes)) {
             if (! superTypes.containsAll(currentSuperTypes)) {
-                throw new AtlasBaseException("superType remove not supported");
+                throw new AtlasBaseException(AtlasErrorCode.SUPERTYPE_REMOVAL_NOT_SUPPORTED);
             }
 
             for (String superType : superTypes) {
@@ -350,7 +351,7 @@ public class AtlasTypeDefGraphStoreV1 extends AtlasTypeDefGraphStore {
                 getOrCreateEdge(vertex, superTypeVertex, AtlasGraphUtilsV1.SUPERTYPE_EDGE_LABEL);
             }
         } else if (CollectionUtils.isNotEmpty(currentSuperTypes)) {
-            throw new AtlasBaseException("superType remove not supported");
+            throw new AtlasBaseException(AtlasErrorCode.SUPERTYPE_REMOVAL_NOT_SUPPORTED);
         }
     }
 
